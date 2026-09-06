@@ -23,7 +23,7 @@
     "test:watch": "vitest",
     "fetch-node": "node scripts/fetch-node.mjs",
     "dist": "pnpm build && electron-builder --linux deb --x64",
-    "dist:mac": "pnpm build && electron-builder --mac --config.electronVersion=43.4.0 --publish never"
+    "dist:mac": "pnpm build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.2-rc.1",
@@ -39,7 +39,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
-    "electron": "43.4.0",
+    "electron": "44.2.0",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",

@@ -112,7 +112,6 @@ export function registerIpc(
     run(async () => {
       app.setLoginItemSettings({
         openAtLogin: Boolean(enabled),
-        openAsHidden: Boolean(enabled && settings.get().appearance?.launchMinimized),
       })
     }),
   )

@@ -218,7 +218,74 @@ function openArchiveViewer(sessionId: string, title?: string) {
 
 /** 移除应用顶部菜单栏：构建后窗口顶部不再显示「文件/编辑/视图」等菜单。 */
 function setupMenu() {
-  Menu.setApplicationMenu(null)
+  // macOS 用系统菜单栏（屏幕顶部，不侵入窗口 UI）：这是 macOS 用户找"检查更新"
+  // 的惯例位置。同时提供编辑菜单——没有 Edit 菜单时 Cmd+C/V/X/A 等快捷键在
+  // 官方 Web UI 的输入框里会失效。
+  // Windows/Linux 保持无菜单栏（窗口内只有官方 Web UI），更新入口走托盘菜单。
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null)
+    return
+  }
+  const readyVersion = updateLifecycle?.readyVersion ?? null
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'DSH Desktop',
+        submenu: [
+          { role: 'about', label: '关于 DSH Desktop' },
+          readyVersion
+            ? { label: `应用更新 v${readyVersion}`, click: applyDownloadedUpdate }
+            : { label: '检查更新', click: () => updateLifecycle?.checkNow() },
+          { type: 'separator' },
+          { role: 'hide', label: '隐藏 DSH Desktop' },
+          { role: 'hideOthers', label: '隐藏其他' },
+          { role: 'unhide', label: '全部显示' },
+          { type: 'separator' },
+          { role: 'quit', label: '退出 DSH Desktop' },
+        ],
+      },
+      {
+        label: '编辑',
+        submenu: [
+          { role: 'undo', label: '撤销' },
+          { role: 'redo', label: '重做' },
+          { type: 'separator' },
+          { role: 'cut', label: '剪切' },
+          { role: 'copy', label: '拷贝' },
+          { role: 'paste', label: '粘贴' },
+          { role: 'selectAll', label: '全选' },
+        ],
+      },
+      {
+        label: '视图',
+        submenu: [
+          { role: 'reload', label: '重新加载' },
+          { role: 'forceReload', label: '强制重新加载' },
+          { role: 'toggleDevTools', label: '开发者工具' },
+          { type: 'separator' },
+          { role: 'resetZoom', label: '实际大小' },
+          { role: 'zoomIn', label: '放大' },
+          { role: 'zoomOut', label: '缩小' },
+          { type: 'separator' },
+          { role: 'togglefullscreen', label: '切换全屏' },
+        ],
+      },
+      {
+        label: '窗口',
+        submenu: [
+          { role: 'minimize', label: '最小化' },
+          { role: 'close', label: '关闭窗口' },
+          { type: 'separator' },
+          { role: 'front', label: '前置全部窗口' },
+        ],
+      },
+    ]),
+  )
+}
+
+/** 更新状态变化（已下载待安装）时重建应用菜单：菜单里"检查更新"→"应用更新"。 */
+function rebuildAppMenu() {
+  setupMenu()
 }
 
 /** 优雅退出：先停掉 dsh 子进程，再退出应用。 */
@@ -266,13 +333,12 @@ app.whenReady().then(async () => {
   // safeStorage 加密凭证层：桌面端自有的敏感值加密存储
   const creds = createCredentialStore(userDataDir())
 
-  // 开机自启（若配置过）——开机自动拉起，保证 dsh 引擎随系统启动
+  // 开机自启（若配置过）——开机自动拉起，保证 dsh 引擎随系统启动。
+  // Electron 44 移除了 setLoginItemSettings 的 openAsHidden（仅 macOS ≤12 有效，
+  // 44 起不再支持 macOS 12）；"启动最小化"由下方 whenReady 的应用内逻辑实现。
   const appearance = settings.get().appearance
   if (appearance?.autoLaunch) {
-    app.setLoginItemSettings({
-      openAtLogin: true,
-      openAsHidden: Boolean(appearance.launchMinimized),
-    })
+    app.setLoginItemSettings({ openAtLogin: true })
   }
 
   setupMenu()
@@ -290,6 +356,7 @@ app.whenReady().then(async () => {
   updateLifecycle = new UpdateLifecycle(autoUpdater, logger, {
     getWindow: () => mainWindow,
     rebuildTrayMenu,
+    rebuildAppMenu,
     requestQuit: () => shutdown(),
     markUpdateQuitting: () => {
       // 更新驱动的退出：置 quitting 让 before-quit 不拦截、窗口 close 处理器放行

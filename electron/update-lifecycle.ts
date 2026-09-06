@@ -28,6 +28,8 @@ export interface UpdateLifecycleHooks {
   getWindow: () => BrowserWindow | null
   /** 托盘菜单重建（更新已下载时切换"检查更新"→"应用更新"）。 */
   rebuildTrayMenu: () => void
+  /** 应用菜单重建（macOS 顶部菜单栏，同托盘一致切换）。 */
+  rebuildAppMenu: () => void
   /** 退出应用（安装成功后走完整 quit 生命周期以触发 relaunch）。 */
   requestQuit: () => void
   /** 标记应用正在退出（安装前调用）：让窗口 close 处理器放行、before-quit 不拦截。 */
@@ -226,6 +228,7 @@ export class UpdateLifecycle {
       onResult('downloaded')
       this.updateReadyVersion = info.version
       this.hooks.rebuildTrayMenu()
+      this.hooks.rebuildAppMenu()
       this.sendStatus({ state: 'downloaded', version: info.version })
       this.notify(`新版本 ${info.version} 已下载，点托盘"应用更新"完成安装。`)
     })

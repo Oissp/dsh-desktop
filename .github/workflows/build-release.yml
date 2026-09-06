@@ -355,11 +355,11 @@ jobs:
         run: pnpm build
 
       - name: Package macOS (arm64)
-        # 用 Electron 43.4.0（与 dev 一致；顶层 42.9.3 仅因 GNOME 托盘 bug 给 Linux 降级）。
+        # Electron 版本跟随 devDependencies（与 Linux 产物一致，现为 44.2.0）。
         # 无签名证书：CSC_IDENTITY_AUTO_DISCOVERY=false + mac.identity: null → 产物未签名。
         # 需要签名/公证时配置仓库 secrets（CSC_LINK / CSC_KEY_PASSWORD / APPLE_ID /
         # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID）并按 electron-builder.yml 注释启用。
-        run: npx electron-builder --mac --publish never --config.electronVersion=43.4.0
+        run: npx electron-builder --mac --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 

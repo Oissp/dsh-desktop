@@ -28,15 +28,10 @@ asar: false
 
 npmRebuild: false
 
-# 顶层 electronVersion 钉死 42.9.3 仅供 Linux 产物（PR #304 实践）：
-# Electron 43.x 在 GNOME（Ubuntu 24.04 / Debian 13）下托盘图标坏掉——
-#   43.4.0 的 SNI IconPixmap Get 报错，图标 ~3s 后消失；
-#   43.4.1 的 name/path 注册串被拒。
-# 42.9.3 内嵌的 Node（24.18.1）与 43.4.0 相同，原生 NAPI 模块兼容，
-# dev / 测试 / macOS 产物仍用 devDependencies 里的 43.4.0
-# （mac CI 用 --config.electronVersion=43.4.0 覆盖本值）。
-# 上游修复后删掉此行即可恢复跟随。
-electronVersion: 42.9.3
+# Electron 版本跟随 devDependencies（现为 44.2.0，所有平台一致）。
+# 历史：42.9.3 曾钉死仅供 Linux（PR #304 实践），因 Electron 43.x 在 GNOME
+# 下托盘 SNI 回归（43.4.0 IconPixmap Get 报错 / 43.4.1 注册被拒，上游 #52674/
+# #53138/#53213）；43.5.0 与 44.1.0 起已修复，故撤掉 pin 恢复跟随。
 
 # 复制完整 node_modules（见 scripts/after-pack.mjs）
 afterPack: scripts/after-pack.mjs
@@ -47,7 +42,7 @@ asarUnpack:
   - node_modules/.pnpm/koffi*/**/*
 
 # 平台产物见 .github/workflows/build-release.yml：Linux 构建 Debian 13 / amd64 .deb，
-# macOS 构建 arm64 的 dmg + zip；CI 里 mac 以 --config.electronVersion=43.4.0 覆盖本值。
+# macOS 构建 arm64 的 dmg + zip；各平台 Electron 版本均跟随 devDependencies。
 linux:
   # 指向 build/icons 目录（标准 hicolor 命名 <size>x<size>.png）：electron-builder
   # 据此把各尺寸装进 /usr/share/icons/hicolor/<size>x<size>/apps/，桌面环境才能在
