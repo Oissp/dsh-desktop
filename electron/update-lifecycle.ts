@@ -11,6 +11,7 @@
  * main.ts 只负责创建实例、把托盘菜单 click 指向 checkNow/applyDownloadedUpdate。
  */
 import { app, BrowserWindow, Notification, ipcMain, dialog, clipboard, shell } from 'electron'
+import type { MessageBoxOptions } from 'electron'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { autoUpdater as AutoUpdaterType } from 'electron-updater'
@@ -105,7 +106,7 @@ export class UpdateLifecycle {
     if (!this.active) {
       const msg = app.isPackaged ? '当前为未签名构建，自动更新不可用' : '开发模式下无法检查更新'
       this.sendStatus({ state: 'disabled', message: msg })
-      this.notify(msg)
+      this.manualFeedback(msg)
       return
     }
     this.manualCheck = true
@@ -115,7 +116,7 @@ export class UpdateLifecycle {
       this.sendStatus({ state: 'error', message: '检查更新超时，请稍后重试或检查网络后重试' })
       if (this.manualCheck) {
         this.manualCheck = false
-        this.notify('检查更新超时，请稍后重试')
+        this.manualFeedback('检查更新超时，请稍后重试')
       }
     }, MANUAL_CHECK_TIMEOUT)
     void this.checkUpdates(true)
@@ -199,10 +200,10 @@ export class UpdateLifecycle {
       if (state === 'available' || state === 'up-to-date' || state === 'error' || state === 'downloaded') {
         this.clearManualTimer()
       }
-      // 手动检查：任一有结果事件都发通知
+      // 手动检查：任一有结果事件都发反馈（对话框）
       if (this.manualCheck && notifyBody) {
         this.manualCheck = false
-        this.notify(notifyBody)
+        this.manualFeedback(notifyBody)
       }
     }
 
@@ -311,5 +312,22 @@ export class UpdateLifecycle {
     } catch {
       // 通知失败不阻塞
     }
+  }
+
+  /**
+   * 手动检查的用户反馈：用原生对话框而非系统通知。
+   * macOS 未签名构建的通知常因没有通知权限被系统静默丢弃（REPORT-017），
+   * 菜单/托盘点击是主动操作，对话框不依赖权限、反馈一定可见。
+   */
+  private manualFeedback(message: string): void {
+    const opts: MessageBoxOptions = {
+      type: 'info',
+      title: '检查更新',
+      message,
+      buttons: ['确定'],
+      defaultId: 0,
+      noLink: true,
+    }
+    void dialog.showMessageBox(this.hooks.getWindow() ?? new BrowserWindow({ show: false }), opts)
   }
 }
