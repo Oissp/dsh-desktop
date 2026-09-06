@@ -105,6 +105,10 @@ if (!existsSync(outDir)) {
       fail(`无法从 Mach-O 二进制推断架构（${execs[0] ?? '无可执行文件'}）`)
     } else {
       ok(`架构：${arch}`)
+      // CI 打包目标是 arm64（macos-latest arm64 runner），产物架构应匹配
+      if (arch !== 'arm64') {
+        fail(`产物架构 ${arch} 与预期 arm64 不符`)
+      }
     }
 
     const appRes = join(bundle, 'Contents', 'Resources', 'app')

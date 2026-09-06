@@ -1,7 +1,7 @@
 /**
  * electron/main.ts —— 应用入口。
  */
-import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, ipcMain, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DshManager } from './dsh-manager.js'
@@ -227,6 +227,24 @@ function setupMenu() {
     return
   }
   const readyVersion = updateLifecycle?.readyVersion ?? null
+  // 视图菜单：重载/开发者工具只在开发模式暴露。生产菜单里开 DevTools 可让
+  // 任何人在官方 UI 里经 preload 桥访问 window.__desktop__ 的会话凭证。
+  const viewSubmenu: MenuItemConstructorOptions[] = []
+  if (!app.isPackaged) {
+    viewSubmenu.push(
+      { role: 'reload', label: '重新加载' },
+      { role: 'forceReload', label: '强制重新加载' },
+      { role: 'toggleDevTools', label: '开发者工具' },
+      { type: 'separator' },
+    )
+  }
+  viewSubmenu.push(
+    { role: 'resetZoom', label: '实际大小' },
+    { role: 'zoomIn', label: '放大' },
+    { role: 'zoomOut', label: '缩小' },
+    { type: 'separator' },
+    { role: 'togglefullscreen', label: '切换全屏' },
+  )
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -258,17 +276,7 @@ function setupMenu() {
       },
       {
         label: '视图',
-        submenu: [
-          { role: 'reload', label: '重新加载' },
-          { role: 'forceReload', label: '强制重新加载' },
-          { role: 'toggleDevTools', label: '开发者工具' },
-          { type: 'separator' },
-          { role: 'resetZoom', label: '实际大小' },
-          { role: 'zoomIn', label: '放大' },
-          { role: 'zoomOut', label: '缩小' },
-          { type: 'separator' },
-          { role: 'togglefullscreen', label: '切换全屏' },
-        ],
+        submenu: viewSubmenu,
       },
       {
         label: '窗口',

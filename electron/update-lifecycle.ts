@@ -200,10 +200,12 @@ export class UpdateLifecycle {
       if (state === 'available' || state === 'up-to-date' || state === 'error' || state === 'downloaded') {
         this.clearManualTimer()
       }
-      // 手动检查：任一有结果事件都发反馈（对话框）
-      if (this.manualCheck && notifyBody) {
+      // 手动检查：任一有结果事件都清手动标记（'downloaded' 无文案但同样算
+      // 一次检查有结果，不清会残留标记，下一次后台轮询误弹对话框）；
+      // 有文案才弹对话框。
+      if (this.manualCheck) {
         this.manualCheck = false
-        this.manualFeedback(notifyBody)
+        if (notifyBody) this.manualFeedback(notifyBody)
       }
     }
 
@@ -328,6 +330,13 @@ export class UpdateLifecycle {
       defaultId: 0,
       noLink: true,
     }
-    void dialog.showMessageBox(this.hooks.getWindow() ?? new BrowserWindow({ show: false }), opts)
+    const win = this.hooks.getWindow()
+    // 只有窗口可见才作为父窗口挂对话框；窗口隐藏到托盘时挂到隐藏窗口上
+    // macOS 不会弹出来（随隐藏窗口一起不可见），改为独立对话框浮出。
+    if (win && !win.isDestroyed() && win.isVisible()) {
+      void dialog.showMessageBox(win, opts)
+    } else {
+      void dialog.showMessageBox(opts)
+    }
   }
 }
