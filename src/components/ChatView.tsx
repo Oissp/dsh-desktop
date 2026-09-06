@@ -245,7 +245,7 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
           <WhaleLogo className="chat-empty-logo" />
           <h2>开始对话</h2>
           <p className="chat-empty-brand">
-            harness desktop{appVersion ? ` v${appVersion}` : ''} · 你的 AI 工作台
+            dsh desktop{appVersion ? ` v${appVersion}` : ''} · 你的 AI 工作台
           </p>
           <p className="chat-empty-hint">点击下方输入框直接开始，或左侧「新会话」新建会话。</p>
         </div>
@@ -279,10 +279,10 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
       <header className="chat-header">
         <div className="chat-title">{chat.title || '新会话'}</div>
         <div className="chat-header-right">
-          <span className="chat-header-brand" title={`harness desktop v${appVersion || '0.1.0'}`}>
+          <span className="chat-header-brand" title={`dsh desktop v${appVersion || '0.1.0'}`}>
             <WhaleLogo className="chat-header-brand-logo" />
             <span className="chat-header-brand-text">
-              harness desktop{appVersion ? ` v${appVersion}` : ''}
+              dsh desktop{appVersion ? ` v${appVersion}` : ''}
             </span>
           </span>
           <button

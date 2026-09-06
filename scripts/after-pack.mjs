@@ -14,35 +14,30 @@ import { cpSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from
 import { join, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-/** 目标平台 → 需要的 koffi 平台包名（031：win 交叉打包必补）。 */
-function koffiPlatformPackage(targetPlatform) {
-  const map = {
-    win32: 'koffi-win32-x64', // 打包目标是 x64
-    linux: 'koffi-linux-x64',
-    darwin: process.arch === 'arm64' ? 'koffi-darwin-arm64' : 'koffi-darwin-x64',
-  }
-  return map[targetPlatform] ?? null
+/** 目标平台/架构 → 需要的 koffi 平台包名（031：win 交叉打包必补；darwin 需按目标架构取）。 */
+function koffiPlatformPackage(targetPlatform, targetArch) {
+  if (targetArch !== 'x64' && targetArch !== 'arm64') return null
+  return `koffi-${targetPlatform}-${targetArch}`
 }
 
 /** koffi 原生二进制的预期路径（koffi 主包 loadDynamic 按 platform_abi/koffi.node 查找）。 */
-function koffiNativeBinary(pkgDir, targetPlatform) {
+function koffiNativeBinary(pkgDir, targetPlatform, targetArch) {
   // koffi 平台包内布局：linux_x64/koffi.node、musl_x64/koffi.node、win32_x64/koffi.node …
-  // 包名已含 arch（koffiPlatformPackage 固定 x64），故 abi 与包名一致。
+  // 包名已含 arch（koffiPlatformPackage 按目标架构），故 abi 与包名一致。
   // 仅检查目录存在不够（可能空壳/断链），必须确认 .node 二进制真实在位。
-  const abi = targetPlatform === 'darwin' && process.arch === 'arm64' ? 'arm64' : 'x64'
-  return join(pkgDir, `${targetPlatform}_${abi}`, 'koffi.node')
+  return join(pkgDir, `${targetPlatform}_${targetArch}`, 'koffi.node')
 }
 
 /** 确保某平台原生模块包存在于 src（不存在则从 npm 拉取到 node_modules）。 */
-function ensurePlatformNativeModules(projectRoot, targetPlatform, src) {
+function ensurePlatformNativeModules(projectRoot, targetPlatform, targetArch, src) {
   const scoped = '@koromix'
-  const pkgName = koffiPlatformPackage(targetPlatform)
+  const pkgName = koffiPlatformPackage(targetPlatform, targetArch)
   if (!pkgName) return
   const scopedDir = join(src, scoped)
   const pkgDir = join(scopedDir, pkgName)
   // 只检查目录存在不够：pnpm 在某些布局下可能留下空壳或符号链接断链。
   // 必须确认 .node 二进制真实在位，否则 koffi 加载时仍会崩。
-  const nativeBin = koffiNativeBinary(pkgDir, targetPlatform)
+  const nativeBin = koffiNativeBinary(pkgDir, targetPlatform, targetArch)
   if (existsSync(nativeBin)) {
     console.log(`[afterPack] 平台原生模块已存在: ${scoped}/${pkgName}（${nativeBin.slice(src.length)}）`)
     return
@@ -141,7 +136,7 @@ export default async function afterPack(context) {
   console.log(`[afterPack] 目标平台: ${targetPlatform}/${targetArch}`)
 
   // 031：交叉打包时补目标平台原生模块（koffi 等）——必须在 cpSync 之前
-  ensurePlatformNativeModules(projectRoot, packager.platform.nodeName, src)
+  ensurePlatformNativeModules(projectRoot, packager.platform.nodeName, targetArch, src)
 
   // appOutDir 可能是 .app 目录本身，也可能是包含 .app 的父目录（mac）
   let appBundle = appOutDir
@@ -186,12 +181,12 @@ export default async function afterPack(context) {
   // 最终断言：koffi 原生二进制必须进了产物。koffi 是 dsh-subprocess-local 的硬依赖
   // （顶层 import 无平台门控），缺失即引擎启动崩溃。这里区分两种根因便于排查：
   //   - 源里就没有 → ensurePlatformNativeModules 未补上（见上面的日志）
-  //   - 源里有但没复制 → filter 误排除（不应发生，isNonTargetPrebuild 保留 linux-x64）
-  const koffiPkg = koffiPlatformPackage(packager.platform.nodeName)
+  //   - 源里有但没复制 → filter 误排除（不应发生，isNonTargetPrebuild 会保留目标平台的 prebuild）
+  const koffiPkg = koffiPlatformPackage(packager.platform.nodeName, targetArch)
   if (koffiPkg) {
-    const destBin = koffiNativeBinary(join(dest, '@koromix', koffiPkg), packager.platform.nodeName)
+    const destBin = koffiNativeBinary(join(dest, '@koromix', koffiPkg), packager.platform.nodeName, targetArch)
     if (!existsSync(destBin)) {
-      const srcBin = koffiNativeBinary(join(src, '@koromix', koffiPkg), packager.platform.nodeName)
+      const srcBin = koffiNativeBinary(join(src, '@koromix', koffiPkg), packager.platform.nodeName, targetArch)
       const inSrc = existsSync(srcBin)
       throw new Error(
         `[afterPack] 产物缺 koffi 原生二进制: ${destBin}\n` +

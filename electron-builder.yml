@@ -1,4 +1,4 @@
-appId: com.harness.desktop
+appId: com.dsh.desktop
 productName: DSH Desktop
 copyright: Copyright © 2026 DSH Desktop
 
@@ -6,7 +6,7 @@ copyright: Copyright © 2026 DSH Desktop
 publish:
   provider: github
   owner: Oissp
-  repo: harness-desktop
+  repo: dsh-desktop
 
 directories:
   output: out
@@ -28,12 +28,13 @@ asar: false
 
 npmRebuild: false
 
-# Linux 产物钉死 Electron 42.9.3（PR #304 实践）：
+# 顶层 electronVersion 钉死 42.9.3 仅供 Linux 产物（PR #304 实践）：
 # Electron 43.x 在 GNOME（Ubuntu 24.04 / Debian 13）下托盘图标坏掉——
 #   43.4.0 的 SNI IconPixmap Get 报错，图标 ~3s 后消失；
 #   43.4.1 的 name/path 注册串被拒。
 # 42.9.3 内嵌的 Node（24.18.1）与 43.4.0 相同，原生 NAPI 模块兼容，
-# 仅 Linux 产物降级；dev / 测试仍用 devDependencies 里的 43.4.0。
+# dev / 测试 / macOS 产物仍用 devDependencies 里的 43.4.0
+# （mac CI 用 --config.electronVersion=43.4.0 覆盖本值）。
 # 上游修复后删掉此行即可恢复跟随。
 electronVersion: 42.9.3
 
@@ -45,7 +46,8 @@ asarUnpack:
   - node_modules/.pnpm/node-pty*/**/*
   - node_modules/.pnpm/koffi*/**/*
 
-# 仅构建 Debian 13 / amd64 .deb（见 .github/workflows/build-debian.yml）
+# 平台产物见 .github/workflows/build-release.yml：Linux 构建 Debian 13 / amd64 .deb，
+# macOS 构建 arm64 的 dmg + zip；CI 里 mac 以 --config.electronVersion=43.4.0 覆盖本值。
 linux:
   # 指向 build/icons 目录（标准 hicolor 命名 <size>x<size>.png）：electron-builder
   # 据此把各尺寸装进 /usr/share/icons/hicolor/<size>x<size>/apps/，桌面环境才能在
@@ -58,6 +60,25 @@ linux:
       arch:
         - x64
   maintainer: Oissp <19642615+Oissp@users.noreply.github.com>
+
+# macOS：dmg（分发）+ zip（electron-updater 增量更新），仅 arm64（Apple Silicon）。
+# 未配置证书时 identity: null 跳过签名（与 Linux CI 做法一致，见 REPORT-017）。
+# 启用签名/公证：提供 CSC_LINK / CSC_KEY_PASSWORD（p12）后删除 identity 行（或改为
+# 证书名），并设置 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（公证）。
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  # 与 deb 的 ${name}_${version}_${arch} 命名保持一致，避免默认的
+  # "${productName} ${version} ${arch}"（含空格）导致产物名不可预期。
+  artifactName: ${name}-${version}-${arch}.${ext}
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  identity: null
 
 # deb 压缩：保持默认 xz（fpm 1.9.3 只支持 gz|bzip2|xz）。实测 623MB 原始数据，
 # xz -3 在三个支持的压缩里体积最小（~138MB）且最快（CI ~2min）；gzip -9 更慢更大

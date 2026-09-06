@@ -188,7 +188,7 @@ const desktop: DesktopBridge = {
 
 contextBridge.exposeInMainWorld('__desktop__', desktop)
 
-// ---- 品牌注入（官方 UI 页面）：渐变流动鲸鱼 + "harness desktop vX" ----
+// ---- 品牌注入（官方 UI 页面）：渐变流动鲸鱼 + "dsh desktop vX" ----
 // 目标区域：① 窗口右上角（fixed 定位，任何页面可见）
 //          ② 首次会话 hero（替换官方"探索未至之境 预览版"区）
 // 动态变色 = SMIL 渐变 stop 颜色/位置循环（蓝→紫→粉），纯浏览器动画，无 JS 定时器

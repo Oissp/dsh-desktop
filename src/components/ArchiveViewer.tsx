@@ -74,7 +74,7 @@ export default function ArchiveViewer({ sessionId, title }: Props) {
       <header className="chat-header">
         <div className="chat-title">{archive.title || title || '归档会话'}</div>
         <div className="chat-header-right">
-          <span className="chat-header-brand" title={`harness desktop v${appVersion || '0.1.0'}`}>
+          <span className="chat-header-brand" title={`dsh desktop v${appVersion || '0.1.0'}`}>
             <WhaleLogo className="chat-header-brand-logo" />
             <span className="chat-header-brand-text">归档会话（只读）</span>
           </span>

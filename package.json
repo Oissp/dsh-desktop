@@ -6,7 +6,7 @@
   "type": "module",
   "author": "Oissp <19642615+Oissp@users.noreply.github.com>",
   "license": "MIT",
-  "homepage": "https://github.com/Oissp/harness-desktop",
+  "homepage": "https://github.com/Oissp/dsh-desktop",
   "private": true,
   "packageManager": "pnpm@11.21.0",
   "scripts": {
@@ -22,7 +22,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fetch-node": "node scripts/fetch-node.mjs",
-    "dist": "pnpm build && electron-builder --linux deb --x64"
+    "dist": "pnpm build && electron-builder --linux deb --x64",
+    "dist:mac": "pnpm build && electron-builder --mac --config.electronVersion=43.4.0 --publish never"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.2-rc.1",
