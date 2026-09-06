@@ -1,12 +1,18 @@
 name: Release (Debian + macOS)
 
-# 发版不依赖上游 dsh 版本号：项目功能更新后 bump package.json 版本号并推送 main 即发版。
+# 发版不依赖上游 dsh 版本号：push 到 main 后由 detect job 自动判定并发版。
+#
+# 发版判定（detect job）：
+#   - 当前版本未发过（手动 bump / dsh 同步 bump / 首次）→ 按当前版本发
+#   - 当前版本已发过 + 自上次发版以来有源码改动（push 触发）→ 自动 patch-bump 再发
+#   - 当前版本已发过 + 无源码改动（auto-bump 提交回环 / 纯文档）→ 跳过
+# 因此小修复只需提交源码并推送，无需手动 bump 版本号；自动 bump 提交由发版 job 回写 main。
 # 同时保留 @deepseek-ai/dsh 的 npm 版本检测：定时检测上游 latest，有新版则升级依赖
 # 并 patch-bump 应用版本号（与 dsh 版本号解耦，仅标记"依赖更新发版"），随本次发版一起发布。
 #
 # 触发：
 #   - schedule：每日 UTC 06:00 检测 dsh 上游（有更新则升级依赖 + 发版）
-#   - push 到 main（package.json 变更，即版本号 bump）：功能更新发版
+#   - push 到 main（源码 / 配置 / package.json）：按上述判定发版
 #   - 手动 workflow_dispatch（可强制重建当前版本）
 #
 # 发布产物（tag = v<package.json version>）：
@@ -14,7 +20,7 @@ name: Release (Debian + macOS)
 #   macOS:  dsh-desktop-<version>-arm64.dmg + .zip + latest-mac.yml + blockmap
 #   （latest-<os>.yml 是 electron-updater 检查更新必需的元数据）
 #
-# 幂等：若 v<version> release 已存在则跳过，避免重复发版。
+# 幂等：v<version> 已发且无源码改动时跳过，避免重复发版 / 无限回环。
 
 on:
   schedule:
@@ -22,7 +28,16 @@ on:
     - cron: '0 6 * * *'
   push:
     branches: [main]
-    paths: ['package.json']
+    # 源码/配置变更即触发；detect 判定是否发版。docs/README/.github 不触发。
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'shared/**'
+      - 'plugins/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
   workflow_dispatch:
     inputs:
       dsh_version:
@@ -146,8 +161,13 @@ jobs:
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
+      bumped: ${{ steps.check.outputs.bumped }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 自动 bump 要对比最近发版 tag 判断"自上次发版以来是否有源码改动"
+          fetch-depth: 0
+          fetch-tags: true
 
       - id: check
         env:
@@ -159,30 +179,91 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION=$(node -e "console.log(require('./package.json').version)")
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "待发布版本: $VERSION"
 
-          # 幂等：v<version> release 已存在则跳过（force 可绕过）
-          if [ "$FORCE" = "true" ]; then
-            echo "::notice::强制重建模式，跳过已发布检查"
-            SHOULD_RELEASE=true
-          elif gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "v$VERSION release 已存在，跳过发布"
-            SHOULD_RELEASE=false
+          # 最近发版 tag（与 changelog 同款逻辑；无历史 tag 时为空）
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+
+          # 自上次发版以来是否有源码改动（package.json 版本号不算；docs/README 也不算）
+          SRC_CHANGED=false
+          if [ -n "$PREV_TAG" ]; then
+            if ! git diff --quiet "$PREV_TAG"..HEAD -- electron src shared plugins scripts electron-builder.yml pnpm-lock.yaml; then
+              SRC_CHANGED=true
+            fi
           else
-            echo "v$VERSION release 不存在，继续发布"
-            SHOULD_RELEASE=true
+            SRC_CHANGED=true
           fi
+
+          # 当前版本是否已发过
+          RELEASED=false
+          if gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            RELEASED=true
+          fi
+
+          SHOULD_RELEASE=false
+          BUMPED=false
+
+          if [ "$FORCE" = "true" ]; then
+            echo "::notice::强制重建模式，跳过已发布 / 自动 bump 检查"
+            SHOULD_RELEASE=true
+          elif [ "$RELEASED" = "true" ]; then
+            # 版本已发过：仅当 push 触发 + 有未发源码改动时自动 bump 发新版，否则跳过
+            if [ "$SRC_CHANGED" = "true" ] && [ "${{ github.event_name }}" = "push" ] && [ "${{ needs.sync-dsh.outputs.bumped }}" != "true" ]; then
+              node -e "
+                const fs=require('fs');const p='./package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));
+                const m=j.version.match(/^(\d+)\.(\d+)\.(\d+)/);
+                if(!m){throw new Error('invalid version: '+j.version);}
+                j.version=m[1]+'.'+m[2]+'.'+(Number(m[3])+1);
+                fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');
+              "
+              VERSION=$(node -e "console.log(require('./package.json').version)")
+              BUMPED=true
+              SHOULD_RELEASE=true
+              echo "::notice::检测到未发源码改动，自动 patch-bump → $VERSION"
+            else
+              echo "版本 $VERSION 已发布，跳过（无未发源码改动 / 非 push 触发）"
+            fi
+          else
+            # 版本待发（手动 bump / dsh 同步 bump / 首次 / 上次发版失败后的重试）。
+            # 但 auto-bump 提交回推 main 触发的重跑（push 且无源码改动）不算——跳过防重复构建。
+            if [ "$SRC_CHANGED" = "true" ] || [ "${{ github.event_name }}" != "push" ]; then
+              echo "版本 $VERSION 尚未发布，按当前版本发版"
+              SHOULD_RELEASE=true
+            else
+              echo "版本 $VERSION 未发布但无源码改动（auto-bump 回环），跳过"
+            fi
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+
+          # 自动 bump 后的 package.json 交给 build / release job 使用（与 sync-dsh 同款 artifact 布局）
+          if [ "$BUMPED" = "true" ]; then
+            rm -rf bumped-staging && mkdir -p bumped-staging
+            cp package.json bumped-staging/
+            cp pnpm-lock.yaml bumped-staging/
+          fi
 
           # 决策写入 step summary，Actions UI 直接可见，排查 re-run 时不必下日志
           {
             echo "## 发版决策"
             echo "- 触发: \`${{ github.event_name }}\`"
             echo "- 版本: \`$VERSION\`"
+            echo "- 上次发版: \`${PREV_TAG:-（无）}\`"
+            echo "- 有源码改动: \`$SRC_CHANGED\`"
+            echo "- 自动 bump: \`$BUMPED\`"
             echo "- should_release: \`$SHOULD_RELEASE\`"
             echo "- sync-dsh: \`${{ needs.sync-dsh.result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bumped source (auto-bump)
+        if: steps.check.outputs.bumped == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bumped-source
+          path: |
+            bumped-staging/*
+          retention-days: 3
 
   build:
     name: Build .deb (Debian 13)
@@ -201,8 +282,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Apply bumped source (dsh sync)
-        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+      - name: Apply bumped source
+        if: ${{ (needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true') || needs.detect.outputs.bumped == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: bumped-source
@@ -237,6 +318,20 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.21.0 --activate
           pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：精确命中（lockfile 未变）零下载；
+      # lockfile 变了也能靠 restore-keys 复用旧 store，只下载新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -325,8 +420,8 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Apply bumped source (dsh sync)
-        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+      - name: Apply bumped source
+        if: ${{ (needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true') || needs.detect.outputs.bumped == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: bumped-source
@@ -345,6 +440,20 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.21.0 --activate
           pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：精确命中（lockfile 未变）零下载；
+      # lockfile 变了也能靠 restore-keys 复用旧 store，只下载新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -393,7 +502,7 @@ jobs:
           fetch-tags: true
 
       - name: Apply bumped source (for commit)
-        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+        if: ${{ (needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true') || needs.detect.outputs.bumped == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: bumped-source
@@ -443,6 +552,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json pnpm-lock.yaml
           git commit -m "chore(sync): @deepseek-ai/dsh ${{ needs.sync-dsh.outputs.old_dsh }} → ${{ needs.sync-dsh.outputs.new_dsh }}" || true
+          git push
+
+      - name: Commit auto-bump
+        # 把 detect job 的自动 patch-bump 提交回仓库（与 dsh sync bump 互斥：不会同时发生）。
+        # 该提交会再次触发 workflow，但 detect 判定"版本已发 + 无源码改动"→ 跳过，不会回环。
+        if: needs.detect.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${{ needs.detect.outputs.version }}" || true
           git push
 
       - name: Create GitHub Release
