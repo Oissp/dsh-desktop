@@ -15,6 +15,10 @@ name: Release (Debian + macOS)
 #   macOS:  dsh-desktop-<version>-arm64.dmg + .zip + latest-mac.yml + blockmap
 #   （latest-<os>.yml 是 electron-updater 检查更新必需的元数据）
 #
+# 发布拆分：Linux 与 macOS 各自独立发布到同一个 release（tag = v<version>）。
+# Linux 发布不依赖 mac 构建成功（mac 失败不卡 .deb 发版）；mac 发布排在 Linux
+# 发布之后追加产物，避免两个 job 并发抢同一个 tag。
+#
 # 幂等：若 v<version> release 已存在则跳过，避免重复发版。
 
 on:
@@ -408,12 +412,13 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish Release
-    needs: [sync-dsh, detect, build, build-mac]
+    name: Publish Linux Release (.deb)
+    needs: [sync-dsh, detect, build]
     # 关键：必须用 !cancelled()，否则隐式 success() 会因 sync-dsh 在 push 时
     # 被 skipped 而判定失败 → release 永远跳过 → push 发版发不出去。
-    # 仅当 build 与 build-mac 都真正成功且 should_release=true 时才发布。
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.build-mac.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    # 只依赖 Linux build 成功：mac 构建失败不再卡死 .deb 发布（mac 由
+    # release-mac job 独立处理，排在 Linux 发布之后追加同一 release）。
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.detect.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -435,14 +440,8 @@ jobs:
           name: release-assets
           path: release-assets
 
-      - name: Download macOS build artifacts
-        uses: actions/download-artifact@v7
-        with:
-          name: release-assets-mac
-          path: release-assets-mac
-
       - name: Show release assets
-        run: ls -lh release-assets/ release-assets-mac/
+        run: ls -lh release-assets/
 
       - name: Generate changelog
         id: changelog
@@ -487,16 +486,49 @@ jobs:
 
             ### 变更
             ${{ env.body }}
-          # 连同 latest-linux.yml / latest-mac.yml / blockmap 一起上传，缺 yml 则桌面端检查更新失败
+          # 连同 latest-linux.yml / blockmap 一起上传，缺 yml 则桌面端检查更新失败。
+          # mac 产物（dmg/zip/latest-mac.yml）由 release-mac job 追加到同一 release。
           files: |
             release-assets/*.deb
             release-assets/latest-linux.yml
             release-assets/*.blockmap
-            release-assets-mac/*.dmg
-            release-assets-mac/*.zip
-            release-assets-mac/latest-mac.yml
-            release-assets-mac/*.blockmap
           generate_release_notes: true
           draft: false
           # 任何含 '-' 的版本号都是 semver 预发布（alpha/beta/rc/dev 等），标记为 prerelease。
           prerelease: ${{ contains(needs.detect.outputs.version, '-') }}
+
+  release-mac:
+    name: Publish macOS Release
+    # 排在 Linux 发布之后（needs: release）：Linux job 负责建 tag + release +
+    # changelog + dsh sync 提交，本 job 只把 mac 产物挂到同一个 release 上。
+    # 依赖 release.result == 'success' 而非并行建 tag，避免两个 job 抢同一个 tag。
+    # Linux 发布只依赖 build，因此 mac 构建失败不影响 .deb 发版；
+    # 反向场景（Linux 构建失败、mac 成功）会跳过本 job，mac 不单独发版——
+    # mac 通道目前未签名不可用（REPORT-017），单独发版无价值，故不做兜底。
+    needs: [sync-dsh, detect, build-mac, release]
+    if: ${{ !cancelled() && needs.build-mac.result == 'success' && needs.release.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets-mac
+          path: release-assets-mac
+
+      - name: Show macOS assets
+        run: ls -lh release-assets-mac/
+
+      - name: Upload macOS assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          echo "追加 mac 产物到 v$VERSION"
+          # --clobber：重跑时同名 dmg/zip 已存在也不报错（幂等）
+          gh release upload "v$VERSION" \
+            release-assets-mac/*.dmg \
+            release-assets-mac/*.zip \
+            release-assets-mac/latest-mac.yml \
+            release-assets-mac/*.blockmap \
+            --repo "${{ github.repository }}" \
+            --clobber
