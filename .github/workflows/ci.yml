@@ -1,0 +1,73 @@
+name: CI check
+
+# 小修小补的验证通道：push 到 main / PR 时跑构建 + 测试，不发版、不 bump 版本号。
+# 发版仍走 build-release.yml（仅 package.json 版本变更 / 定时 / dispatch 触发），
+# 因此这里刻意排除 package.json，避免发版时与 release workflow 重复跑一遍验证。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'shared/**'
+      - 'plugins/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'pnpm-lock.yaml'
+  pull_request:
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'shared/**'
+      - 'plugins/**'
+      - 'scripts/**'
+      - 'electron-builder.yml'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：lockfile 未变零下载，变了靠 restore-keys 只补新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # postinstall 的 ensure-electron 会下载 Electron 二进制，缓存 ~/.cache/electron 免重复下载。
+      - name: Cache Electron binary
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build renderer & electron main
+        run: pnpm build
