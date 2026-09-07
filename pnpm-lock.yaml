@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.2-rc.1
+        specifier: latest
         version: 0.1.2-rc.1(64beda03b9fc377022de34e5f3ad47f7)
       electron-updater:
         specifier: ^6.8.9
