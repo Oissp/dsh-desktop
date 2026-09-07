@@ -119,12 +119,14 @@ const WS_MAX_DEPTH = 3
 const WS_MAX_ENTRIES = 800
 const WS_MAX_FILE_BYTES = 256 * 1024
 
-/** 校验 target 是否位于 root 目录内（路径穿越防护）。 */
-function isWithin(root: string, target: string): boolean {
-  const r = resolve(root)
-  const t = resolve(target)
-  if (t === r) return true
-  return t.startsWith(r + sep)
+/** 规范化路径（解析符号链接）以防路径穿越。 */
+function realpath(p: string): string {
+  try {
+    const { realpathSync } = require('node:fs')
+    return realpathSync(p)
+  } catch {
+    return resolve(p)
+  }
 }
 
 /** 递归列出工作区文件树（深度/数量受限）。 */
@@ -141,7 +143,7 @@ function listWorkspaceTree(
   let budget = limit
 
   const walk = (dir: string, depth: number): WorkspaceFileNode[] => {
-    if (budget <= 0 || depth > maxDepth) return []
+    if (depth > maxDepth || budget <= 0) return []
     const out: WorkspaceFileNode[] = []
     let names: string[]
     try {
@@ -161,8 +163,8 @@ function listWorkspaceTree(
       }
       if (st.isDirectory()) {
         if (WS_IGNORE_DIRS.has(name)) continue
-        const children = walk(full, depth + 1)
         budget -= 1
+        const children = walk(full, depth + 1)
         out.push({
           name,
           path: full,
@@ -194,18 +196,23 @@ function readWorkspaceFile(cwd: string, filePath: string): {
   size: number
 } {
   const root = resolve(cwd)
-  const target = resolve(filePath)
-  if (!isWithin(root, target)) {
+  const target = realpath(resolve(filePath))
+  const rootReal = realpath(root)
+  if (!target.startsWith(rootReal + sep) && target !== rootReal) {
     throw new Error('文件不在工作区内')
   }
   if (!existsSync(target) || !statSync(target).isFile()) {
     throw new Error('文件不存在：' + basename(target))
   }
-  const size = statSync(target).size
+  const stat = statSync(target)
+  const size = stat.size
   const truncated = size > WS_MAX_FILE_BYTES
-  const buf = truncated ? readFileSync(target).subarray(0, WS_MAX_FILE_BYTES) : readFileSync(target)
+  const buf = readFileSync(target)
+  const content = truncated
+    ? buf.subarray(0, WS_MAX_FILE_BYTES).toString('utf8')
+    : buf.toString('utf8')
   return {
-    content: buf.toString('utf8'),
+    content,
     truncated,
     size,
   }
@@ -259,12 +266,22 @@ export function registerIpc(
   // ---- workspace 插件：工作区文件树 / 文件预览 ----
   ipcMain.handle(
     'desktop:listWorkspace',
-    (_e, cwd: string, opts?: { maxDepth?: number; limit?: number }) =>
-      run(() => Promise.resolve(listWorkspaceTree(String(cwd ?? ''), opts ?? {}))),
+    (_e, cwd: string, opts?: { maxDepth?: number; limit?: number }) => {
+      const cwdStr = String(cwd ?? '').trim()
+      if (!cwdStr) {
+        return fail(new Error('工作区路径为空'))
+      }
+      return run(() => Promise.resolve(listWorkspaceTree(cwdStr, opts ?? {})))
+    },
   )
-  ipcMain.handle('desktop:readWorkspaceFile', (_e, cwd: string, filePath: string) =>
-    run(() => Promise.resolve(readWorkspaceFile(String(cwd ?? ''), String(filePath ?? '')))),
-  )
+  ipcMain.handle('desktop:readWorkspaceFile', (_e, cwd: string, filePath: string) => {
+    const cwdStr = String(cwd ?? '').trim()
+    const fileStr = String(filePath ?? '').trim()
+    if (!cwdStr || !fileStr) {
+      return fail(new Error('路径参数缺失'))
+    }
+    return run(() => Promise.resolve(readWorkspaceFile(cwdStr, fileStr)))
+  })
 
   // ---- dsh 生命周期 ----
   ipcMain.handle('dsh:status', () => run(() => Promise.resolve(manager.status())))

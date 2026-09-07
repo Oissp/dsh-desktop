@@ -713,7 +713,7 @@ function sanitizeName(type: string): string {
     type
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9一-龥]+/g, '-')
+      .replace(/[^a-z0-9一-鿿㐀-䶿]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 40) || 'skill'
   )

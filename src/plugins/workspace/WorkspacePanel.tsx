@@ -103,10 +103,16 @@ export default function WorkspacePanel({ workspaceCwd: cwd }: Props) {
     setError(null)
     try {
       const list = await window.__desktop__?.listWorkspace(cwd, { maxDepth: 3, limit: 800 })
-      setTree(list ?? [])
-      if (list && list.length > 0) setOpenDirs(new Set([cwd]))
+      if (!list) {
+        setError('IPC 调用失败')
+        setTree([])
+        return
+      }
+      setTree(list)
+      if (list.length > 0) setOpenDirs(new Set([cwd]))
     } catch (e) {
       setError((e as Error).message ?? '加载失败')
+      setTree([])
     } finally {
       setLoading(false)
     }

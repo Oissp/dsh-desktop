@@ -121,7 +121,8 @@ export function summarizeUsage(data: UsageData): {
     const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow)
     const weekStartKey = dayKey(weekStart.getTime())
 
-    const monthKey = now.toISOString().slice(0, 7) // YYYY-MM（ISO 月前缀与本地日期键前缀一致）
+    // 本月前缀：本地时区 YYYY-MM（与 dayKey 格式一致）
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     const zero = (): UsageDay => ({
       date: '',
       inputTokens: 0,

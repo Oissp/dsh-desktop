@@ -721,8 +721,10 @@ function injectDesktopLayout() {
     spacer.style.flex = '1'
     tb.appendChild(mk('☰', '展开侧边栏', () => toggleBtn()?.click()))
     tb.appendChild(mk('搜索', '搜索会话', () => {
-      toggleBtn()?.click()
-      setTimeout(() => searchBtn()?.click(), 150)
+      const toggle = toggleBtn()
+      const search = searchBtn()
+      if (toggle) toggle.click()
+      if (search) setTimeout(() => search.click(), 150)
     }))
     tb.appendChild(spacer)
     tb.appendChild(mk('新会话', '新建会话', () => newSessionBtn()?.click(), true))

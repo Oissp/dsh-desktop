@@ -49,7 +49,7 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
     const unsub = subscribeAll((evt) => {
       if (evt.kind !== 'tool-call') return
       const name = evt.name.toLowerCase()
-      if (/write|create|edit|patch|mkdir|add|mv|rename|copy|touch/.test(name)) {
+      if (/^(write|create|edit|patch|mkdir|add|mv|rename|copy|touch)$/i.test(name)) {
         setShowWorkspace(true)
       }
     })
