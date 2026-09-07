@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, ArchivedSessionInfo, DshStatus, SessionSummary, TaskRecord } from '../../shared/types'
 import { subscribeAll } from '../bus'
 import { TaskStore } from '../tasks'
-import Brand from './Brand'
 import Sidebar from './Sidebar'
 import ChatView from './ChatView'
 import TaskPanel from './TaskPanel'
@@ -37,6 +36,9 @@ export default function MainView({
   const [keyTick, setKeyTick] = useState(0)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
   const [tasks, setTasks] = useState<TaskRecord[]>([])
+  const [collapsed, setCollapsed] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const listRefreshRef = useRef(() => {})
 
   // 任务存储：从会话事件推导任务状态
@@ -190,6 +192,13 @@ export default function MainView({
     const rest = uniq.filter((s) => !pinnedSet.has(s.sessionId))
     return [...pinned, ...rest]
   }, [sessions, pinnedSessionIds])
+
+  // 折叠态顶部搜索：按标题过滤会话（空关键词显示全部，兼作快速切换器）
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return displaySessions
+    return displaySessions.filter((s) => (s.title || '新会话').toLowerCase().includes(q))
+  }, [displaySessions, searchQuery])
 
   const refreshSessions = useCallback(async () => {
     const res = await harness.listSessions()
@@ -439,10 +448,71 @@ export default function MainView({
 
   return (
     <div className="app-shell">
-      <header className="brand-bar">
-        <Brand />
-      </header>
+      {collapsed && (
+        <>
+          <div className="app-topbar">
+            <button
+              className="topbar-btn"
+              title="展开侧边栏"
+              onClick={() => {
+                setCollapsed(false)
+                setSearchOpen(false)
+                setSearchQuery('')
+              }}
+            >
+              ☰
+            </button>
+            <button
+              className={`topbar-btn ${searchOpen ? 'active' : ''}`}
+              title="搜索会话"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              搜索
+            </button>
+            <div className="topbar-spacer" />
+            <button className="new-chat-btn topbar-new-chat" onClick={newChat} disabled={creating}>
+              <span className="new-chat-icon">{creating ? '⋯' : '+'}</span>
+              {creating ? '创建中…' : '新会话'}
+            </button>
+            {searchOpen && (
+              <div className="search-panel">
+                <input
+                  className="search-input"
+                  placeholder="搜索会话标题…"
+                  value={searchQuery}
+                  autoFocus
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setSearchOpen(false)
+                  }}
+                />
+                <div className="search-results">
+                  {searchResults.length === 0 ? (
+                    <div className="sidebar-hint">无匹配会话</div>
+                  ) : (
+                    searchResults.map((s) => (
+                      <button
+                        key={s.sessionId}
+                        className={`search-result-row ${s.sessionId === activeId ? 'active' : ''}`}
+                        onClick={() => selectSession(s.sessionId)}
+                      >
+                        <span className="session-indicator" aria-hidden>
+                          {s.running ? <span className="session-spinner" /> : <span className="session-dot" />}
+                        </span>
+                        <span className="search-result-title" title={s.title || '新会话'}>
+                          {s.title || '新会话'}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       <div className="app-body">
+        {!collapsed && (
         <Sidebar
           sessions={displaySessions}
           archivedSessions={archivedDisplay}
@@ -471,6 +541,7 @@ export default function MainView({
           onExport={exportSession}
           onCopyId={copySessionId}
         />
+        )}
         {view === 'chat' ? (
           <ChatView
             sessionId={activeId}
