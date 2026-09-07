@@ -6,6 +6,9 @@ import Sidebar from './Sidebar'
 import ChatView from './ChatView'
 import TaskPanel from './TaskPanel'
 import SettingsModal from './SettingsModal'
+import SessionSearch from './SessionSearch'
+import { IconPanel, IconPlus, IconSearch, IconTasks, IconChat, IconSettings, IconMore } from './icons'
+import { UsageStore } from '../plugins/usage/UsageStore'
 
 const harness = window.harness
 
@@ -36,10 +39,34 @@ export default function MainView({
   const [keyTick, setKeyTick] = useState(0)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
   const [tasks, setTasks] = useState<TaskRecord[]>([])
-  const [collapsed, setCollapsed] = useState(false)
+  // 侧边栏折叠态持久化在设置里，重启后保持上次的形态
+  const [collapsed, setCollapsed] = useState(appSettings.sidebarCollapsed ?? false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const searchOpenRef = useRef(false)
+  searchOpenRef.current = searchOpen
   const listRefreshRef = useRef(() => {})
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev
+      void onUpdateSettings({ sidebarCollapsed: next })
+      return next
+    })
+  }, [onUpdateSettings])
+
+  // 用量统计（usage 插件）：应用启动即挂载，全局累计 token/回合/工具调用
+  const usageStoreRef = useRef<UsageStore | null>(null)
+  if (!usageStoreRef.current) {
+    usageStoreRef.current = new UsageStore((next) => {
+      void onUpdateSettings({ usage: next })
+    })
+  }
+  useEffect(() => {
+    const store = usageStoreRef.current!
+    store.load(appSettings.usage)
+    return store.attach()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 任务存储：从会话事件推导任务状态
   const taskStoreRef = useRef<TaskStore | null>(null)
@@ -193,12 +220,31 @@ export default function MainView({
     return [...pinned, ...rest]
   }, [sessions, pinnedSessionIds])
 
-  // 折叠态顶部搜索：按标题过滤会话（空关键词显示全部，兼作快速切换器）
-  const searchResults = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return displaySessions
-    return displaySessions.filter((s) => (s.title || '新会话').toLowerCase().includes(q))
-  }, [displaySessions, searchQuery])
+  // 快捷键：⌘/Ctrl+B 折叠侧边栏，⌘/Ctrl+K 唤起搜索，Esc 关闭搜索。
+  // ⌘F 只在非输入场景下劫持为搜索——输入框里的 ⌘F 留给系统/编辑器。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey) {
+        if (searchOpenRef.current) {
+          e.preventDefault()
+          setSearchOpen(false)
+        }
+        return
+      }
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod || e.altKey) return
+      const key = e.key.toLowerCase()
+      if (key === 'b') {
+        e.preventDefault()
+        toggleCollapsed()
+      } else if (key === 'k' || (key === 'f' && !isEditableFocus())) {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggleCollapsed])
 
   const refreshSessions = useCallback(async () => {
     const res = await harness.listSessions()
@@ -257,6 +303,20 @@ export default function MainView({
         }
       }),
     [archivedSessions, archivedMeta],
+  )
+
+  // 归档会话整形为 SessionSummary，供命令面板同池搜索（折叠态下唯一入口）
+  const archivedSearchable = useMemo<SessionSummary[]>(
+    () =>
+      archivedDisplay.map((s) => ({
+        sessionId: s.sessionId,
+        title: s.title || '',
+        updatedAt: s.archivedAt ?? 0,
+        running: false,
+        blank: false,
+        cwd: s.cwd,
+      })),
+    [archivedDisplay],
   )
 
   // 会话 running 状态即时更新（无需等 session.list 往返），让侧边栏转圈即时生效
@@ -448,72 +508,63 @@ export default function MainView({
 
   return (
     <div className="app-shell">
-      {collapsed && (
-        <>
-          <div className="app-topbar">
-            <button
-              className="topbar-btn"
-              title="展开侧边栏"
-              onClick={() => {
-                setCollapsed(false)
-                setSearchOpen(false)
-                setSearchQuery('')
-              }}
-            >
-              ☰
-            </button>
-            <button
-              className={`topbar-btn ${searchOpen ? 'active' : ''}`}
-              title="搜索会话"
-              onClick={() => setSearchOpen((v) => !v)}
-            >
-              搜索
-            </button>
-            <div className="topbar-spacer" />
-            <button className="new-chat-btn topbar-new-chat" onClick={newChat} disabled={creating}>
-              <span className="new-chat-icon">{creating ? '⋯' : '+'}</span>
-              {creating ? '创建中…' : '新会话'}
-            </button>
-            {searchOpen && (
-              <div className="search-panel">
-                <input
-                  className="search-input"
-                  placeholder="搜索会话标题…"
-                  value={searchQuery}
-                  autoFocus
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setSearchOpen(false)
-                  }}
-                />
-                <div className="search-results">
-                  {searchResults.length === 0 ? (
-                    <div className="sidebar-hint">无匹配会话</div>
-                  ) : (
-                    searchResults.map((s) => (
-                      <button
-                        key={s.sessionId}
-                        className={`search-result-row ${s.sessionId === activeId ? 'active' : ''}`}
-                        onClick={() => selectSession(s.sessionId)}
-                      >
-                        <span className="session-indicator" aria-hidden>
-                          {s.running ? <span className="session-spinner" /> : <span className="session-dot" />}
-                        </span>
-                        <span className="search-result-title" title={s.title || '新会话'}>
-                          {s.title || '新会话'}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+      {/* 折叠态顶部工具条：常驻渲染，靠高度动画收放，避免挂载/卸载造成的跳动。
+          内容仅在折叠态挂载，收起时不会留下可 Tab 到的隐藏按钮。 */}
+      <header className={`collapsed-bar ${collapsed ? 'is-visible' : ''}`} aria-hidden={!collapsed}>
+        {collapsed && (
+        <div className="collapsed-bar-inner">
+          <button
+            className="cb-btn"
+            onClick={toggleCollapsed}
+            title="展开侧边栏 (⌘B)"
+            aria-label="展开侧边栏"
+          >
+            <IconPanel collapsed size={17} />
+          </button>
+
+          {/* 搜索入口做成真实的输入框样式，点击唤起命令面板 */}
+          <button className="cb-search" onClick={() => setSearchOpen(true)} title="搜索会话 (⌘K)">
+            <IconSearch size={14} className="cb-search-icon" />
+            <span className="cb-search-ph">搜索会话…</span>
+            <kbd className="cb-search-kbd">⌘K</kbd>
+          </button>
+
+          <span className="cb-divider" />
+
+          <button
+            className="cb-btn cb-label"
+            onClick={newChat}
+            disabled={creating}
+            title="新会话"
+            aria-label="新会话"
+          >
+            {creating ? <IconMore size={17} /> : <IconPlus size={17} />}
+            <span>{creating ? '创建中…' : '新会话'}</span>
+          </button>
+          <button
+            className={`cb-btn ${view === 'tasks' ? 'active' : ''}`}
+            onClick={() => setView(view === 'tasks' ? 'chat' : 'tasks')}
+            title={view === 'tasks' ? '返回会话' : '任务面板'}
+            aria-label={view === 'tasks' ? '返回会话' : '任务面板'}
+          >
+            {view === 'tasks' ? <IconChat size={17} /> : <IconTasks size={17} />}
+          </button>
+          <button
+            className="cb-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="设置"
+            aria-label="设置"
+          >
+            <IconSettings size={17} />
+          </button>
+        </div>
+        )}
+      </header>
       <div className="app-body">
-        {!collapsed && (
         <Sidebar
+          collapsed={collapsed}
+          onCollapse={toggleCollapsed}
+          onSearch={() => setSearchOpen(true)}
           sessions={displaySessions}
           archivedSessions={archivedDisplay}
           activeId={activeId}
@@ -541,7 +592,6 @@ export default function MainView({
           onExport={exportSession}
           onCopyId={copySessionId}
         />
-        )}
         {view === 'chat' ? (
           <ChatView
             sessionId={activeId}
@@ -565,6 +615,16 @@ export default function MainView({
           />
         )}
       </div>
+      {searchOpen && (
+        <SessionSearch
+          sessions={displaySessions}
+          archivedSessions={archivedSearchable}
+          activeId={activeId}
+          onSelect={selectSession}
+          onNewChat={newChat}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
       {settingsOpen && (
         <SettingsModal
           appSettings={appSettings}
@@ -590,6 +650,14 @@ export default function MainView({
       )}
     </div>
   )
+}
+
+/** 焦点是否落在可编辑区域（输入框/文本域/contenteditable）。 */
+function isEditableFocus(): boolean {
+  const el = document.activeElement as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
 }
 
 /** 标题字符双元组集合（用于相似度）。 */
@@ -645,7 +713,7 @@ function sanitizeName(type: string): string {
     type
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+      .replace(/[^a-z0-9一-龥]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 40) || 'skill'
   )

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentPresetInfo, ModelGroup, PickedFile } from '../../shared/types'
 import { chatReducer, emptyChat, type ChatState } from '../chatReducer'
-import { subscribeSession } from '../bus'
+import { subscribeAll, subscribeSession } from '../bus'
 import { TrajectoryBuilder, type TrajectoryTurn } from '../trajectory'
 import MessageList from './MessageList'
 import ChatInput from './ChatInput'
 import TrajectoryPanel from './TrajectoryPanel'
 import WhaleLogo from './WhaleLogo'
+import { workspacePlugins } from '../plugins'
 
 const harness = window.harness
 
@@ -36,7 +37,24 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
   const [attachments, setAttachments] = useState<PickedFile[]>([])
   const [trajectory, setTrajectory] = useState<TrajectoryTurn[]>([])
   const [showTrajectory, setShowTrajectory] = useState(false)
+  const [showWorkspace, setShowWorkspace] = useState(false)
+  const [wsWidth, setWsWidth] = useState(380)
   const [appVersion, setAppVersion] = useState('')
+  const wsPlugins = useMemo(() => workspacePlugins(), [])
+
+  // workspace 插件：AI 写文件/创建文件类工具调用时自动展开面板（对齐 Alma 生成 artifact 自动打开）
+  useEffect(() => {
+    const panel = wsPlugins[0]?.workspacePanel
+    if (!panel?.autoOpenOnFileWrite || !workspaceCwd) return
+    const unsub = subscribeAll((evt) => {
+      if (evt.kind !== 'tool-call') return
+      const name = evt.name.toLowerCase()
+      if (/write|create|edit|patch|mkdir|add|mv|rename|copy|touch/.test(name)) {
+        setShowWorkspace(true)
+      }
+    })
+    return unsub
+  }, [wsPlugins, workspaceCwd])
   const trajBuilderRef = useRef<TrajectoryBuilder | null>(null)
   if (!trajBuilderRef.current) trajBuilderRef.current = new TrajectoryBuilder()
   const chatRef = useRef(chat)
@@ -285,6 +303,15 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
               dsh desktop{appVersion ? ` v${appVersion}` : ''}
             </span>
           </span>
+          {wsPlugins.length > 0 && (
+            <button
+              className={`btn small ghost ${showWorkspace ? 'active' : ''}`}
+              onClick={() => setShowWorkspace((v) => !v)}
+              title={showWorkspace ? wsPlugins[0].workspacePanel!.titleActive ?? wsPlugins[0].workspacePanel!.title : wsPlugins[0].workspacePanel!.title}
+            >
+              {wsPlugins[0].workspacePanel!.title}
+            </button>
+          )}
           <button
             className={`btn small ghost ${showTrajectory ? 'active' : ''}`}
             onClick={() => setShowTrajectory((v) => !v)}
@@ -312,6 +339,39 @@ export default function ChatView({ sessionId, onTitleChange, modelsTick, workspa
             onRegenerate={onRegenerate}
           />
         </div>
+
+        {showWorkspace && wsPlugins[0]?.workspacePanel && (
+          <div
+            className="chat-details ws-drawer"
+            style={{ width: wsWidth, minWidth: wsWidth }}
+          >
+            <div
+              className="ws-resize-handle"
+              title="拖拽调宽"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                const startX = e.clientX
+                const startW = wsWidth
+                const onMove = (ev: MouseEvent) => {
+                  const w = Math.min(560, Math.max(300, startW + (startX - ev.clientX)))
+                  setWsWidth(w)
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+            />
+            <div className="ws-drawer-close">
+              <button className="btn small ghost" onClick={() => setShowWorkspace(false)}>
+                收起
+              </button>
+            </div>
+            {wsPlugins[0].workspacePanel.render({ sessionId, workspaceCwd })}
+          </div>
+        )}
 
         {showTrajectory && (
           <div className="chat-details">

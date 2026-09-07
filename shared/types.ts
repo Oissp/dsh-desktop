@@ -48,6 +48,47 @@ export interface AppSettings {
   generatedSkillTypes?: string[]
   /** 外观配置（011）。 */
   appearance?: AppearanceConfig
+  /** 侧边栏是否折叠为窄图标栏（app 本地，跨启动保持）。 */
+  sidebarCollapsed?: boolean
+  /** 用量统计（usage 插件：从会话事件流推导，按天聚合，app 本地）。 */
+  usage?: UsageData
+}
+
+/** 单日用量聚合。 */
+export interface UsageDay {
+  /** 日期键：YYYY-MM-DD（本地时区）。 */
+  date: string
+  /** 未缓存输入 token（turn-end.usage.inputTokens 累计）。 */
+  inputTokens: number
+  /** 输出 token（turn-end.usage.outputTokens 累计）。 */
+  outputTokens: number
+  /** 缓存读取 token（turn-end.usage.cacheReadTokens 累计）。 */
+  cacheReadTokens: number
+  /** 缓存写入 token（turn-end.usage.cacheWriteTokens 累计）。 */
+  cacheWriteTokens: number
+  /** 推理 token（turn-end.usage.reasoningTokens 累计）。 */
+  reasoningTokens: number
+  /** 回合数（turn-end 计数）。 */
+  turns: number
+  /** 工具调用次数（tool-call 计数）。 */
+  tools: number
+}
+
+/** 用量统计数据结构（usage 插件持久化格式）。 */
+export interface UsageData {
+  /** 按天聚合，键为日期。 */
+  days: Record<string, UsageDay>
+}
+
+/** 工作区文件树节点（workspace 插件：由主进程列目录生成）。 */
+export interface WorkspaceFileNode {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  mtime: number
+  /** 目录节点在展开后才填充。 */
+  children?: WorkspaceFileNode[]
 }
 
 /** 外观配置（主题/主题色/字体/密度/启动行为）。 */
@@ -335,7 +376,18 @@ export type SessionStreamEvent =
       time: number
       reason?: 'completed' | 'error' | 'stopped'
       error?: string
-      usage?: { inputTokens?: number; outputTokens?: number }
+      /**
+       * 本回合模型调用聚合用量。字段对齐引擎 TokenUsage：
+       * inputTokens 为未缓存输入；计费输入 = input + cacheRead + cacheWrite。
+       */
+      usage?: {
+        inputTokens?: number
+        outputTokens?: number
+        totalTokens?: number
+        cacheReadTokens?: number
+        cacheWriteTokens?: number
+        reasoningTokens?: number
+      }
     }
   | {
       /** 乐观用户消息（renderer 本地，立即上屏；dsh 的 user-message 到达后去重替换）。 */

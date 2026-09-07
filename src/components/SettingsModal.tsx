@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings, DshStatus, ModelGroup } from '../../shared/types'
 import CustomProviders from './CustomProviders'
 import CredentialsSection from './CredentialsSection'
@@ -9,6 +9,7 @@ import SkillsSection from './SkillsSection'
 import AppearanceSection from './AppearanceSection'
 import UpdateSection from './UpdateSection'
 import EvolutionSection from './EvolutionSection'
+import { settingsPlugins } from '../plugins'
 
 const harness = window.harness
 
@@ -26,9 +27,9 @@ interface Props {
   onGenerateSkill: (sessionId: string, type: string) => void
 }
 
-type NavKey = 'general' | 'models' | 'automation' | 'memory' | 'skills' | 'evolution' | 'advanced'
+type NavKey = 'general' | 'models' | 'automation' | 'memory' | 'skills' | 'evolution' | 'advanced' | `plugin:${string}`
 
-const NAV: { key: NavKey; label: string }[] = [
+const BASE_NAV: { key: NavKey; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'models', label: '模型与凭证' },
   { key: 'automation', label: '提醒与自动化' },
@@ -37,6 +38,18 @@ const NAV: { key: NavKey; label: string }[] = [
   { key: 'evolution', label: '进化' },
   { key: 'advanced', label: '高级' },
 ]
+
+/** 设置导航 = 基础项 + 插件项（插件面板统一挂到最底部，符合「设置最下」的要求）。 */
+function buildNav(): { key: NavKey; label: string; hint?: string }[] {
+  return [
+    ...BASE_NAV,
+    ...settingsPlugins().map((p) => ({
+      key: `plugin:${p.id}` as NavKey,
+      label: p.settings!.navLabel,
+      hint: p.settings!.navHint,
+    })),
+  ]
+}
 
 export default function SettingsModal({
   appSettings,
@@ -52,6 +65,7 @@ export default function SettingsModal({
   onGenerateSkill,
 }: Props) {
   const [active, setActive] = useState<NavKey>('general')
+  const NAV = useMemo(() => buildNav(), [])
   const [picking, setPicking] = useState(false)
   const [models, setModels] = useState<ModelGroup[]>([])
   const [model, setModel] = useState(appSettings.model ?? '')
@@ -107,6 +121,7 @@ export default function SettingsModal({
               onClick={() => setActive(n.key)}
             >
               <span>{n.label}</span>
+              {n.hint && <span className="settings-nav-hint">{n.hint}</span>}
             </button>
           ))}
           <button className="settings-nav-close" onClick={onClose}>
@@ -226,6 +241,31 @@ export default function SettingsModal({
               planActive={planActive}
               onPlanToggle={onPlanToggle}
             />
+          )}
+
+          {active.startsWith('plugin:') && (
+            (() => {
+              const id = active.slice('plugin:'.length)
+              const plugin = settingsPlugins().find((p) => p.id === id)
+              if (!plugin?.settings) return null
+              return (
+                <div className="settings-plugin-section">
+                  <div className="settings-plugin-head">
+                    <span className="settings-plugin-name">{plugin.name}</span>
+                    {plugin.description && (
+                      <span className="settings-plugin-desc">{plugin.description}</span>
+                    )}
+                    <span className="settings-plugin-badge">plugin</span>
+                  </div>
+                  {plugin.settings.render({
+                    appSettings,
+                    sessionId: activeSessionId,
+                    workspaceCwd: appSettings.workspaceCwd,
+                    onUpdateSettings,
+                  })}
+                </div>
+              )
+            })()
           )}
 
           {msg && <div className={`settings-msg ${msg.type}`}>{msg.text}</div>}

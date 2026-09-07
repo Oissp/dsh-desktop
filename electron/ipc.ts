@@ -5,8 +5,8 @@
  * dsh 上游变更永远到不了这里。
  */
 import { ipcMain, dialog, clipboard, app, shell, type BrowserWindow } from 'electron'
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, extname, join, resolve, sep } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
 import type { SettingsStore } from './settings-store.js'
 import { ReminderManager } from './reminder-manager.js'
@@ -22,6 +22,7 @@ import type {
   PickedFile,
   Reminder,
   WebSearchConfig,
+  WorkspaceFileNode,
 } from '../shared/types.js'
 
 /** 把归一化会话事件渲染成 Markdown（A6 会话导出）。 */
@@ -89,6 +90,127 @@ function run<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   return fn().then(ok, fail)
 }
 
+/** workspace 插件：默认忽略的目录（常见构建产物/依赖/元数据目录）。 */
+const WS_IGNORE_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.hg',
+  '.svn',
+  'dist',
+  'out',
+  'build',
+  '.cache',
+  '__pycache__',
+  '.venv',
+  'venv',
+  '.DS_Store',
+  'coverage',
+  '.idea',
+  '.vscode',
+  '.next',
+  '.turbo',
+  '.yarn',
+  '.pnpm-store',
+  'target',
+  '.alma',
+])
+
+const WS_MAX_DEPTH = 3
+const WS_MAX_ENTRIES = 800
+const WS_MAX_FILE_BYTES = 256 * 1024
+
+/** 校验 target 是否位于 root 目录内（路径穿越防护）。 */
+function isWithin(root: string, target: string): boolean {
+  const r = resolve(root)
+  const t = resolve(target)
+  if (t === r) return true
+  return t.startsWith(r + sep)
+}
+
+/** 递归列出工作区文件树（深度/数量受限）。 */
+function listWorkspaceTree(
+  cwd: string,
+  opts: { maxDepth?: number; limit?: number },
+): WorkspaceFileNode[] {
+  const root = resolve(cwd)
+  if (!root || !existsSync(root) || !statSync(root).isDirectory()) {
+    throw new Error('工作区目录不存在：' + cwd)
+  }
+  const maxDepth = Math.max(1, Math.min(opts.maxDepth ?? WS_MAX_DEPTH, 6))
+  const limit = opts.limit ?? WS_MAX_ENTRIES
+  let budget = limit
+
+  const walk = (dir: string, depth: number): WorkspaceFileNode[] => {
+    if (budget <= 0 || depth > maxDepth) return []
+    const out: WorkspaceFileNode[] = []
+    let names: string[]
+    try {
+      names = readdirSync(dir)
+    } catch {
+      return out
+    }
+    names.sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    for (const name of names) {
+      if (budget <= 0) break
+      const full = join(dir, name)
+      let st
+      try {
+        st = statSync(full)
+      } catch {
+        continue
+      }
+      if (st.isDirectory()) {
+        if (WS_IGNORE_DIRS.has(name)) continue
+        const children = walk(full, depth + 1)
+        budget -= 1
+        out.push({
+          name,
+          path: full,
+          isDir: true,
+          size: 0,
+          mtime: st.mtimeMs,
+          children,
+        })
+      } else if (st.isFile()) {
+        budget -= 1
+        out.push({
+          name,
+          path: full,
+          isDir: false,
+          size: st.size,
+          mtime: st.mtimeMs,
+        })
+      }
+    }
+    return out
+  }
+  return walk(root, 0)
+}
+
+/** 读取工作区文件内容用于预览（限大小，限工作区根内）。 */
+function readWorkspaceFile(cwd: string, filePath: string): {
+  content: string
+  truncated: boolean
+  size: number
+} {
+  const root = resolve(cwd)
+  const target = resolve(filePath)
+  if (!isWithin(root, target)) {
+    throw new Error('文件不在工作区内')
+  }
+  if (!existsSync(target) || !statSync(target).isFile()) {
+    throw new Error('文件不存在：' + basename(target))
+  }
+  const size = statSync(target).size
+  const truncated = size > WS_MAX_FILE_BYTES
+  const buf = truncated ? readFileSync(target).subarray(0, WS_MAX_FILE_BYTES) : readFileSync(target)
+  return {
+    content: buf.toString('utf8'),
+    truncated,
+    size,
+  }
+}
+
 export function registerIpc(
   manager: DshManager,
   settings: SettingsStore,
@@ -132,6 +254,16 @@ export function registerIpc(
         // 通知失败不阻塞
       }
     }),
+  )
+
+  // ---- workspace 插件：工作区文件树 / 文件预览 ----
+  ipcMain.handle(
+    'desktop:listWorkspace',
+    (_e, cwd: string, opts?: { maxDepth?: number; limit?: number }) =>
+      run(() => Promise.resolve(listWorkspaceTree(String(cwd ?? ''), opts ?? {}))),
+  )
+  ipcMain.handle('desktop:readWorkspaceFile', (_e, cwd: string, filePath: string) =>
+    run(() => Promise.resolve(readWorkspaceFile(String(cwd ?? ''), String(filePath ?? '')))),
   )
 
   // ---- dsh 生命周期 ----

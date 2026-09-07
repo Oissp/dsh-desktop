@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArchivedSessionInfo, SessionSummary } from '../../shared/types'
 import SessionContextMenu from './SessionContextMenu'
+import {
+  IconPanel,
+  IconSearch,
+  IconPlus,
+  IconTasks,
+  IconChat,
+  IconSettings,
+  IconRefresh,
+  IconMore,
+  IconChevron,
+  IconClose,
+} from './icons'
 
 interface Props {
+  collapsed: boolean
+  onCollapse: () => void
+  onSearch: () => void
   sessions: SessionSummary[]
   archivedSessions: ArchivedSessionInfo[]
   activeId: string | null
@@ -44,6 +59,9 @@ interface MenuState {
 }
 
 export default function Sidebar({
+  collapsed,
+  onCollapse,
+  onSearch,
   sessions,
   archivedSessions,
   activeId,
@@ -103,17 +121,31 @@ export default function Sidebar({
   const menuSession = menu ? sessions.find((s) => s.sessionId === menu.sessionId) ?? null : null
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
+      <div className="sidebar-inner">
+      <div className="sidebar-head">
+        <span className="sidebar-brand">会话</span>
+        <div className="sidebar-head-actions">
+          <button className="sidebar-collapse-btn" onClick={onSearch} title="搜索会话 (⌘K)" aria-label="搜索会话">
+            <IconSearch size={16} />
+          </button>
+          <button className="sidebar-collapse-btn" onClick={onCollapse} title="收起侧边栏 (⌘B)" aria-label="收起侧边栏">
+            <IconPanel collapsed={false} size={16} />
+          </button>
+        </div>
+      </div>
+
       <div className="sidebar-actions">
         <button className="new-chat-btn" onClick={onNewChat} disabled={creating}>
-          <span className="new-chat-icon">{creating ? '⋯' : '+'}</span>
+          <span className="new-chat-icon">{creating ? <IconMore size={16} /> : <IconPlus size={16} />}</span>
           {creating ? '创建中…' : '新会话'}
         </button>
         <button
           className={`tasks-btn ${view === 'tasks' ? 'active' : ''}`}
           onClick={() => onSwitchView(view === 'tasks' ? 'chat' : 'tasks')}
         >
-          <span>{view === 'tasks' ? '返回会话' : '任务'}</span>
+          {view === 'tasks' ? <IconChat size={14} /> : <IconTasks size={14} />}
+          <span>{view === 'tasks' ? '返回会话' : '任务面板'}</span>
         </button>
       </div>
 
@@ -186,7 +218,7 @@ export default function Sidebar({
                     title="更多"
                     onClick={(e) => openMenuAt(e, s.sessionId)}
                   >
-                    ⋯
+                    <IconMore size={15} />
                   </button>
                 </span>
               )}
@@ -202,7 +234,9 @@ export default function Sidebar({
             onClick={() => setArchivedCollapsed((c) => !c)}
             title={archivedCollapsed ? '展开归档会话' : '收起归档会话'}
           >
-            <span className="archived-caret">{archivedCollapsed ? '▸' : '▾'}</span>
+            <span className="archived-caret">
+              <IconChevron collapsed={archivedCollapsed} size={12} />
+            </span>
             <span className="archived-label">归档</span>
             <span className="archived-count">{archivedSessions.length}</span>
           </button>
@@ -247,7 +281,7 @@ export default function Sidebar({
                             setConfirmDeleteId(s.sessionId)
                           }}
                         >
-                          ✕
+                          <IconClose size={12} />
                         </button>
                       </>
                     )}
@@ -261,11 +295,14 @@ export default function Sidebar({
 
       <div className="sidebar-footer">
         <button className="settings-btn" onClick={onOpenSettings} title="设置">
+          <IconSettings size={15} />
           <span>设置</span>
         </button>
-        <button className="sidebar-icon-btn" onClick={onRefresh} title="刷新列表">
-          ↻
+        <button className="sidebar-icon-btn" onClick={onRefresh} title="刷新列表" aria-label="刷新列表">
+          <IconRefresh size={15} />
         </button>
+      </div>
+
       </div>
 
       {menu && menuSession && (

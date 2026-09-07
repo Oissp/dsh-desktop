@@ -145,7 +145,16 @@ export function normalizeSessionEvent(
         time: Number(evt.time ?? Date.now()),
         reason: reasonRaw.kind === 'completed' ? 'completed' : reasonRaw.kind === 'error' ? 'error' : 'stopped',
         error: reasonRaw.error?.message,
-        usage: (data.usage as { inputTokens?: number; outputTokens?: number } | undefined) ?? undefined,
+        usage: (data.usage as
+          | {
+              inputTokens?: number
+              outputTokens?: number
+              totalTokens?: number
+              cacheReadTokens?: number
+              cacheWriteTokens?: number
+              reasoningTokens?: number
+            }
+          | undefined) ?? undefined,
       })
       // 回合结束 → running:false（思考完成/转圈停止的关键）
       out.push({ kind: 'running', sessionId, running: false })

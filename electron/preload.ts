@@ -12,6 +12,7 @@ import type {
   IpcResult,
   PickedFile,
   Reminder,
+  WorkspaceFileNode,
   SessionStreamEvent,
   WebSearchConfig,
 } from '../shared/types.js'
@@ -127,6 +128,13 @@ interface DesktopBridge {
   hardDeleteSession(sessionId: string, cwd?: string): Promise<boolean>
   /** 在只读窗口打开归档会话，查看其历史内容。 */
   openArchiveViewer(sessionId: string, title?: string): Promise<void>
+  /** workspace 插件：列出工作区文件树。 */
+  listWorkspace(
+    cwd: string,
+    opts?: { maxDepth?: number; limit?: number },
+  ): Promise<WorkspaceFileNode[]>
+  /** workspace 插件：读取工作区文件内容（限大小/限根目录内）。 */
+  readWorkspaceFile(cwd: string, filePath: string): Promise<{ content: string; truncated: boolean; size: number } | null>
   onEnginePort(cb: (port: number | null) => void): () => void
   onMenuEvent(cb: (action: 'new-chat' | 'open-settings') => void): () => void
 }
@@ -166,6 +174,18 @@ const desktop: DesktopBridge = {
   },
   openArchiveViewer: async (sessionId, title) => {
     await call('desktop:openArchiveViewer', sessionId, title)
+  },
+  listWorkspace: async (cwd, opts) => {
+    const res = await call<WorkspaceFileNode[]>('desktop:listWorkspace', cwd, opts)
+    return res.ok ? res.value! : []
+  },
+  readWorkspaceFile: async (cwd, filePath) => {
+    const res = await call<{ content: string; truncated: boolean; size: number }>(
+      'desktop:readWorkspaceFile',
+      cwd,
+      filePath,
+    )
+    return res.ok ? res.value! : null
   },
   onEnginePort: (cb) => {
     const listener = (_e: unknown, status: DshStatus) => {
@@ -590,5 +610,188 @@ function injectArchivedPanel() {
   }
 }
 
+/**
+ * 布局注入（官方 UI 页面）：侧边栏全折叠 + 折叠后顶部工具条。
+ *
+ * 官方 UI 自带的折叠（品牌行 ☰）只把侧边栏缩到 56px 图标栏（rail）。这里在
+ * 检测到 rail 态后把侧边栏完全隐藏、主区占满，并在顶部注入一条工具条：
+ *   ☰ 展开侧边栏 —— 点官方折叠按钮复原
+ *   搜索          —— 展开并聚焦官方搜索框（工作区标签旁）
+ *   新会话        —— 点官方新会话按钮
+ * 三个操作都复用官方原生控件，不重复造按钮。
+ */
+function injectDesktopLayout() {
+  const TOOLBAR_ATTR = 'data-hd-layout-toolbar'
+
+  /** 主题探测：与品牌/归档注入同一套亮度启发式。 */
+  const isDark = () =>
+    !document.body?.hasAttribute('data-ds-light-theme') &&
+    (document.body?.hasAttribute('data-ds-dark-theme') ||
+      (() => {
+        const s = document.body ? getComputedStyle(document.body).backgroundColor : ''
+        const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(s)
+        if (!m) return true
+        return Number(m[1]) * 0.299 + Number(m[2]) * 0.587 + Number(m[3]) * 0.114 <= 140
+      })())
+
+  const colors = () =>
+    isDark()
+      ? { bg: 'rgb(15,17,21)', fg: '#e8eaf1', border: 'rgb(255 255 255 / 10%)', hover: 'rgb(255 255 255 / 8%)' }
+      : { bg: '#f7f8fa', fg: '#111418', border: 'rgb(0 0 0 / 8%)', hover: 'rgb(0 0 0 / 6%)' }
+
+  /** 官方布局网格第一列 = 侧边栏（class 含 "sidebarCol"，与品牌注入同模式）。 */
+  const sidebar = (): HTMLElement | null =>
+    document.querySelector('[class*="sidebarCol"]') as HTMLElement | null
+  /** 官方布局网格容器（侧边栏的直接父级，grid-template-columns 三列）。 */
+  const frame = (): HTMLElement | null => {
+    const s = sidebar()
+    return s ? (s.parentElement as HTMLElement) : null
+  }
+  /** 侧边栏右侧拖拽手柄（拖动改宽度，全折叠后应隐藏避免悬在主区上）。 */
+  const resizeHandle = (): HTMLElement | null => {
+    const f = frame()
+    if (!f) return null
+    for (const c of Array.from(f.children) as HTMLElement[]) {
+      if (c.className && String(c.className).includes('handle')) return c
+    }
+    return null
+  }
+  /** 官方折叠按钮（品牌行 ☰，rail/展开两态都在）。 */
+  const toggleBtn = (): HTMLElement | null => {
+    const s = sidebar()
+    return s ? (s.querySelector('button[class*="_toggle"]') as HTMLElement | null) : null
+  }
+  /** 官方新会话按钮。 */
+  const newSessionBtn = (): HTMLElement | null => {
+    const s = sidebar()
+    return s ? (s.querySelector('[class*="_newSession"]') as HTMLElement | null) : null
+  }
+  /** 官方搜索按钮（工作区标签旁；点击展开搜索输入框并聚焦）。 */
+  const searchBtn = (): HTMLElement | null =>
+    document.querySelector('button[class*="_searchButton"]') as HTMLElement | null
+
+  /**
+   * rail（56px）/ 全隐藏态。判定不能靠宽度测量：折叠/展开走 grid 过渡动画，
+   * 中途测量会竞态——React 展开时刚把 grid 恢复成 280px，我们却在过渡中读到
+   * <100px 误判为折叠，又把 grid 归零卡死。改用官方折叠按钮的 aria-label
+   * （折叠态=“打开侧边栏 / Open sidebar”，展开态=“收起侧边栏 / Collapse sidebar”）。
+   */
+  const isCollapsed = (): boolean => {
+    const b = toggleBtn()
+    if (b) {
+      const label = (b.getAttribute('aria-label') || '').trim()
+      if (label) return /打开|open/i.test(label)
+    }
+    const s = sidebar()
+    return s ? s.getBoundingClientRect().width < 100 : false
+  }
+
+  let toolbar: HTMLElement | null = null
+
+  /** 创建（或复用已注入的）顶部工具条，返回挂载后的节点。 */
+  const ensureToolbar = (): HTMLElement => {
+    let tb = document.querySelector('[' + TOOLBAR_ATTR + ']') as HTMLElement | null
+    if (tb && tb.isConnected) return tb
+    const c = colors()
+    tb = document.createElement('div')
+    tb.setAttribute(TOOLBAR_ATTR, '1')
+    tb.style.cssText =
+      'position:fixed;top:0;left:0;right:0;height:44px;display:none;align-items:center;gap:4px;' +
+      'padding:0 10px;background:' + c.bg + ';border-bottom:1px solid ' + c.border + ';' +
+      'z-index:9999;user-select:none'
+    const mk = (label: string, title: string, on: () => void, primary = false): HTMLElement => {
+      const b = document.createElement('button')
+      b.textContent = label
+      b.title = title
+      b.style.cssText =
+        'height:30px;padding:0 12px;border-radius:6px;border:1px solid transparent;cursor:pointer;' +
+        'font:500 13px/1 -apple-system,"Segoe UI",Roboto,sans-serif;' +
+        'background:' + (primary ? '#4f8cff' : 'transparent') + ';color:' + (primary ? '#fff' : c.fg) + ';' +
+        'transition:background .15s,border-color .15s'
+      b.onmouseenter = () => {
+        if (!primary) b.style.background = c.hover
+      }
+      b.onmouseleave = () => {
+        if (!primary) b.style.background = 'transparent'
+      }
+      b.onclick = on
+      return b
+    }
+    const spacer = document.createElement('div')
+    spacer.style.flex = '1'
+    tb.appendChild(mk('☰', '展开侧边栏', () => toggleBtn()?.click()))
+    tb.appendChild(mk('搜索', '搜索会话', () => {
+      toggleBtn()?.click()
+      setTimeout(() => searchBtn()?.click(), 150)
+    }))
+    tb.appendChild(spacer)
+    tb.appendChild(mk('新会话', '新建会话', () => newSessionBtn()?.click(), true))
+    document.body.appendChild(tb)
+    return tb
+  }
+
+  /** 应用当前布局状态：折叠 → 全隐藏侧栏 + 显示工具条；展开 → 还原。 */
+  const apply = (): void => {
+    const s = sidebar()
+    const f = frame()
+    const h = resizeHandle()
+    const collapsed = isCollapsed()
+    toolbar = ensureToolbar()
+    if (collapsed) {
+      // 把官方 rail（56px 列）清零、侧栏宽度归零（保留在网格流内，避免 display:none
+      // 触发网格自动重排把主区挤掉）；DOM 保留，官方按钮仍可 .click()。
+      if (f) f.style.gridTemplateColumns = '0 minmax(0, 1fr) 0'
+      if (s) s.style.width = '0'
+      if (h) h.style.display = 'none'
+      document.body.classList.add('hd-layout-collapsed')
+      toolbar.style.display = 'flex'
+    } else {
+      // 展开态：grid 归 React 管（官方按状态重写），只还原我们加的部分
+      if (s) s.style.width = ''
+      if (h) h.style.display = ''
+      document.body.classList.remove('hd-layout-collapsed')
+      toolbar.style.display = 'none'
+    }
+  }
+
+  const boot = (): void => {
+    if (process.env.HD_LAYOUT_DEBUG) {
+      setTimeout(() => {
+        const s = sidebar()
+        console.log(
+          '[hd-layout] sidebar=' +
+            (s ? s.tagName + '.' + String(s.className).slice(0, 40) : 'NOT_FOUND') +
+            ' collapsed=' + isCollapsed(),
+        )
+      }, 3000)
+    }
+    apply()
+    // React 重渲染/用户折叠 → 跟随状态（节流）。style 变化经 style 属性 mutation 触发。
+    let lastScan = 0
+    const mo = new MutationObserver(() => {
+      const now = Date.now()
+      if (now - lastScan < 200) return
+      lastScan = now
+      apply()
+    })
+    mo.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    })
+    // 兜底：官方 UI 延迟渲染侧栏时也能命中
+    setTimeout(apply, 500)
+    setTimeout(apply, 1500)
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true })
+  } else {
+    boot()
+  }
+}
+
 injectDesktopBrand()
 injectArchivedPanel()
+injectDesktopLayout()
