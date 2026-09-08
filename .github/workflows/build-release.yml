@@ -277,6 +277,13 @@ jobs:
       - name: Build renderer & electron main
         run: pnpm build
 
+      - name: Vendor standalone Node runtime (ABI 匹配原生模块)
+        # 把当前 node（与 pnpm install 编译 fs-ext/koffi 的同一份）复制进 vendor/node/，
+        # 随包发布后 dsh 引擎跑在 vendored node 上而非 ELECTRON_RUN_AS_NODE。
+        # 否则 fs-ext 等 node-gyp 原生模块按宿主 ABI 编译，打包后却在 Electron
+        # 内置 node（不同 ABI）下 dlopen → NODE_MODULE_VERSION 不匹配 → 启动即崩 → 超时。
+        run: node scripts/fetch-node.mjs --platform=linux --arch=x64
+
       - name: Package .deb (linux x64)
         run: npx electron-builder --linux deb --x64 --publish never
         env:
@@ -387,6 +394,11 @@ jobs:
 
       - name: Build renderer & electron main
         run: pnpm build
+
+      - name: Vendor standalone Node runtime (ABI 匹配原生模块)
+        # 同 Linux job：vendor 与 pnpm install 编译原生模块相同的 node，引擎跑在
+        # vendored node 上，避免 fs-ext 等原生模块在 ELECTRON_RUN_AS_NODE 下 ABI 不匹配。
+        run: node scripts/fetch-node.mjs --platform=darwin --arch=arm64
 
       - name: Package macOS (arm64)
         # Electron 版本跟随 devDependencies（与 Linux 产物一致，现为 44.2.0）。

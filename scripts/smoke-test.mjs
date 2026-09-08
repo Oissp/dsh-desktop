@@ -50,6 +50,20 @@ for (const dep of ['@deepseek-ai/dsh', 'electron-updater', 'koffi']) {
   }
 }
 
+// vendored node 必须随包发布：缺失则引擎兜底到 ELECTRON_RUN_AS_NODE，
+// 原生模块（fs-ext/koffi）ABI 不匹配 → 启动即崩（见 dsh-manager resolveNodeBinary）。
+const vendoredNode = join(unpackedDir, 'resources', 'app', 'vendor', 'node', process.platform === 'win32' ? 'node.exe' : 'node')
+if (!existsSync(vendoredNode)) {
+  fail(`vendored node 缺失：${vendoredNode}（CI 需先执行 fetch-node）`)
+} else {
+  const nodeSize = statSync(vendoredNode).size
+  if (nodeSize < 10 * 1024 * 1024) {
+    fail(`vendored node 异常（${nodeSize} 字节 < 10MB），疑似占位/损坏`)
+  } else {
+    ok(`vendored node 在位（${(nodeSize / 1024 / 1024).toFixed(1)}MB）`)
+  }
+}
+
 if (failures > 0) {
   console.error(`\n[smoke] 静态预检失败：${failures} 项，跳过启动测试`)
   process.exit(1)
