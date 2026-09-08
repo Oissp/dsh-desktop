@@ -16,7 +16,6 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - plugins/**/*
-  - vendor/node/**/*
   - build/icon.png
   - build/tray/**/*
   - build/brand/**/*

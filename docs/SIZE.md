@@ -11,13 +11,12 @@ dsh 依赖闭包不能交给 electron-builder 的默认依赖收集：在 pnpm �
 1. 复制扁平化 `node_modules` 中的运行时依赖
 2. 排除 `package.json` 中列出的开发依赖和构建工具
 3. 排除非目标平台/架构的原生预构建包
-4. 验证目标平台的 koffi 原生二进制实际存在于产物
+4. 验证目标平台的 koffi / node-addon-system 原生二进制实际存在于产物
 
 ## 必须保留的内容
 
 - `@deepseek-ai/*` 及其运行时依赖闭包
-- `node-pty`、`koffi` 等原生模块
-- `vendor/node/` 中由构建流程准备的独立 Node 运行时
+- `node-pty`、`koffi`、`@deepseek-ai/node-addon-system-<platform>-<arch>`（N-API flock prebuild，0.1.5 起取代 fs-ext）等原生模块
 - `plugins/` 和 dsh Web profile 初始化所需文件
 
 `asar: false` 同样是必需设置：profile 初始化会创建符号链接，需要真实文件系统路径。

@@ -14,38 +14,48 @@ import { cpSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from
 import { join, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-/** 目标平台/架构 → 需要的 koffi 平台包名（031：win 交叉打包必补；darwin 需按目标架构取）。 */
-function koffiPlatformPackage(targetPlatform, targetArch) {
-  if (targetArch !== 'x64' && targetArch !== 'arm64') return null
-  return `koffi-${targetPlatform}-${targetArch}`
-}
+/**
+ * 原生模块平台包族：用 optionalDependencies 分发各平台 prebuild 二进制。
+ * 运行时按包名 require.resolve 平台包并加载 .node，故打包产物必须含目标平台包。
+ * packageName 返回 null 表示该目标平台/架构不需要此族原生二进制。
+ */
+const NATIVE_MODULE_FAMILIES = [
+  {
+    // koffi：dsh-subprocess-local 硬依赖，顶层 import 无平台门控（031：win 交叉打包必补）。
+    scope: '@koromix',
+    packageName: (platform, arch) => (arch === 'x64' || arch === 'arm64') ? `koffi-${platform}-${arch}` : null,
+    // koffi 主包 loadDynamic 按 platform_abi/koffi.node 查找。
+    binaryPath: (pkgDir, platform, arch) => join(pkgDir, `${platform}_${arch}`, 'koffi.node'),
+  },
+  {
+    // node-addon-system：0.1.5 起取代 fs-ext 的 flock（session 写锁），linux/darwin N-API prebuild。
+    // flock 仅 POSIX（linux/darwin）；Windows 走命名内核信号量，无需此包。
+    scope: '@deepseek-ai',
+    packageName: (platform, arch) =>
+      (platform === 'linux' || platform === 'darwin') ? `node-addon-system-${platform}-${arch}` : null,
+    binaryPath: (pkgDir, platform) =>
+      platform === 'linux' ? join(pkgDir, 'bin', 'glibc', 'system.node') : join(pkgDir, 'bin', 'system.node'),
+  },
+]
 
-/** koffi 原生二进制的预期路径（koffi 主包 loadDynamic 按 platform_abi/koffi.node 查找）。 */
-function koffiNativeBinary(pkgDir, targetPlatform, targetArch) {
-  // koffi 平台包内布局：linux_x64/koffi.node、musl_x64/koffi.node、win32_x64/koffi.node …
-  // 包名已含 arch（koffiPlatformPackage 按目标架构），故 abi 与包名一致。
-  // 仅检查目录存在不够（可能空壳/断链），必须确认 .node 二进制真实在位。
-  return join(pkgDir, `${targetPlatform}_${targetArch}`, 'koffi.node')
-}
-
-/** 确保某平台原生模块包存在于 src（不存在则从 npm 拉取到 node_modules）。 */
-function ensurePlatformNativeModules(projectRoot, targetPlatform, targetArch, src) {
-  const scoped = '@koromix'
-  const pkgName = koffiPlatformPackage(targetPlatform, targetArch)
+/** 确保某原生模块族的平台包存在于 src（不存在则从 npm 拉取到 node_modules）。 */
+function ensureFamilyPlatformPackage(family, projectRoot, targetPlatform, targetArch, src) {
+  const pkgName = family.packageName(targetPlatform, targetArch)
   if (!pkgName) return
+  const scoped = family.scope
   const scopedDir = join(src, scoped)
   const pkgDir = join(scopedDir, pkgName)
   // 只检查目录存在不够：pnpm 在某些布局下可能留下空壳或符号链接断链。
-  // 必须确认 .node 二进制真实在位，否则 koffi 加载时仍会崩。
-  const nativeBin = koffiNativeBinary(pkgDir, targetPlatform, targetArch)
+  // 必须确认 .node 二进制真实在位，否则原生模块加载时仍会崩。
+  const nativeBin = family.binaryPath(pkgDir, targetPlatform, targetArch)
   if (existsSync(nativeBin)) {
     console.log(`[afterPack] 平台原生模块已存在: ${scoped}/${pkgName}（${nativeBin.slice(src.length)}）`)
     return
   }
   console.log(`[afterPack] 补平台原生模块: ${scoped}/${pkgName} (target=${targetPlatform})`)
-  // koffi 是 dsh-subprocess-local 的硬依赖（顶层 import，无平台门控），缺失会让
-  // 引擎启动时崩溃——没有静默降级的余地。这里失败必须抛错，让 CI 在打包步骤就
-  // 明确失败并打印原因，而不是事后由 verify-deb 告警。
+  // 原生模块是引擎的硬依赖（顶层 import，无平台门控），缺失会让引擎启动时崩溃——
+  // 没有静默降级的余地。这里失败必须抛错，让 CI 在打包步骤就明确失败并打印原因，
+  // 而不是事后由 verify-deb 告警。
   // 用 npm pack 拉 tarball → 手动解包进 node_modules（不写 package.json）
   // stdio: 'inherit' 让 npm/tar 的输出进 CI 日志，便于排查网络或 registry 问题
   execFileSync('npm', ['pack', `${scoped}/${pkgName}`, '--pack-destination', projectRoot], {
@@ -53,7 +63,7 @@ function ensurePlatformNativeModules(projectRoot, targetPlatform, targetArch, sr
     stdio: 'inherit',
     timeout: 120_000,
   })
-  // npm pack 输出 koromix-koffi-win32-x64-<ver>.tgz（去掉 @ 前缀），用 glob 找实际文件
+  // npm pack 输出 deepseek-ai-<pkg>-<ver>.tgz（去掉 @ 前缀），用 glob 找实际文件
   const tgzFile = readdirSync(projectRoot).find((f) => f.includes(pkgName) && f.endsWith('.tgz'))
   if (!tgzFile) throw new Error('npm pack 未生成 tarball')
   const tgz = join(projectRoot, tgzFile)
@@ -135,8 +145,10 @@ export default async function afterPack(context) {
   const targetArch = archName(context.arch)
   console.log(`[afterPack] 目标平台: ${targetPlatform}/${targetArch}`)
 
-  // 031：交叉打包时补目标平台原生模块（koffi 等）——必须在 cpSync 之前
-  ensurePlatformNativeModules(projectRoot, packager.platform.nodeName, targetArch, src)
+  // 031：交叉打包时补目标平台原生模块（koffi / node-addon-system 等）——必须在 cpSync 之前
+  for (const family of NATIVE_MODULE_FAMILIES) {
+    ensureFamilyPlatformPackage(family, projectRoot, packager.platform.nodeName, targetArch, src)
+  }
 
   // appOutDir 可能是 .app 目录本身，也可能是包含 .app 的父目录（mac）
   let appBundle = appOutDir
@@ -178,24 +190,25 @@ export default async function afterPack(context) {
     console.log('[afterPack] 复制完成（无 @deepseek-ai 目录）')
   }
 
-  // 最终断言：koffi 原生二进制必须进了产物。koffi 是 dsh-subprocess-local 的硬依赖
+  // 最终断言：原生模块平台二进制必须进了产物。它们是引擎的硬依赖
   // （顶层 import 无平台门控），缺失即引擎启动崩溃。这里区分两种根因便于排查：
-  //   - 源里就没有 → ensurePlatformNativeModules 未补上（见上面的日志）
+  //   - 源里就没有 → ensureFamilyPlatformPackage 未补上（见上面的日志）
   //   - 源里有但没复制 → filter 误排除（不应发生，isNonTargetPrebuild 会保留目标平台的 prebuild）
-  const koffiPkg = koffiPlatformPackage(packager.platform.nodeName, targetArch)
-  if (koffiPkg) {
-    const destBin = koffiNativeBinary(join(dest, '@koromix', koffiPkg), packager.platform.nodeName, targetArch)
+  for (const family of NATIVE_MODULE_FAMILIES) {
+    const pkgName = family.packageName(packager.platform.nodeName, targetArch)
+    if (!pkgName) continue
+    const destBin = family.binaryPath(join(dest, family.scope, pkgName), packager.platform.nodeName, targetArch)
     if (!existsSync(destBin)) {
-      const srcBin = koffiNativeBinary(join(src, '@koromix', koffiPkg), packager.platform.nodeName, targetArch)
+      const srcBin = family.binaryPath(join(src, family.scope, pkgName), packager.platform.nodeName, targetArch)
       const inSrc = existsSync(srcBin)
       throw new Error(
-        `[afterPack] 产物缺 koffi 原生二进制: ${destBin}\n` +
+        `[afterPack] 产物缺 ${family.scope}/${pkgName} 原生二进制: ${destBin}\n` +
         `  源 node_modules ${inSrc ? '有' : '无'} 该二进制（${srcBin}）。\n` +
         (inSrc
-          ? '  源有但没复制 → 检查 cpSync filter 的 shouldExclude 是否误排了 @koromix/' + koffiPkg
-          : '  源也没有 → ensurePlatformNativeModules 的 npm pack 兜底失败，见上方日志')
+          ? '  源有但没复制 → 检查 cpSync filter 的 shouldExclude 是否误排了 ' + family.scope + '/' + pkgName
+          : '  源也没有 → ensureFamilyPlatformPackage 的 npm pack 兜底失败，见上方日志')
       )
     }
-    console.log(`[afterPack] ✅ koffi 原生二进制已在产物: ${destBin.slice(dest.indexOf('node_modules'))}`)
+    console.log(`[afterPack] ✅ ${family.scope}/${pkgName} 原生二进制已在产物: ${destBin.slice(dest.indexOf('node_modules'))}`)
   }
 }

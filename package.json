@@ -21,9 +21,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "fetch-node": "node scripts/fetch-node.mjs",
-    "dist": "pnpm build && node scripts/fetch-node.mjs --platform=linux --arch=x64 && electron-builder --linux deb --x64",
-    "dist:mac": "pnpm build && node scripts/fetch-node.mjs --platform=darwin --arch=arm64 && electron-builder --mac --publish never"
+    "dist": "pnpm build && electron-builder --linux deb --x64",
+    "dist:mac": "pnpm build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.5-alpha.1",

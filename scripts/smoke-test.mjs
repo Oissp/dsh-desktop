@@ -50,17 +50,30 @@ for (const dep of ['@deepseek-ai/dsh', 'electron-updater', 'koffi']) {
   }
 }
 
-// vendored node 必须随包发布：缺失则引擎兜底到 ELECTRON_RUN_AS_NODE，
-// 原生模块（fs-ext/koffi）ABI 不匹配 → 启动即崩（见 dsh-manager resolveNodeBinary）。
-const vendoredNode = join(unpackedDir, 'resources', 'app', 'vendor', 'node', process.platform === 'win32' ? 'node.exe' : 'node')
-if (!existsSync(vendoredNode)) {
-  fail(`vendored node 缺失：${vendoredNode}（CI 需先执行 fetch-node）`)
+// node-addon-system 平台包必须随包发布（0.1.5 起取代 fs-ext 的 flock 硬依赖）。
+// 缺失则引擎获取会话写锁时 tryLockExclusive 加载不到 N-API prebuild → 会话持久化崩。
+const nasPkg = `node-addon-system-${process.platform}-${process.arch}`
+const nasDir = join(nmRoot, '@deepseek-ai', nasPkg)
+function findNodeBinary(dir) {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) {
+      const found = findNodeBinary(full)
+      if (found) return found
+    } else if (entry.endsWith('.node')) {
+      return full
+    }
+  }
+  return null
+}
+if (!existsSync(nasDir)) {
+  fail(`node-addon-system 平台包缺失：@deepseek-ai/${nasPkg}（afterPack 需补该 prebuild）`)
 } else {
-  const nodeSize = statSync(vendoredNode).size
-  if (nodeSize < 10 * 1024 * 1024) {
-    fail(`vendored node 异常（${nodeSize} 字节 < 10MB），疑似占位/损坏`)
+  const nodeBin = findNodeBinary(nasDir)
+  if (!nodeBin) {
+    fail(`node-addon-system 平台包无 .node 二进制：${nasDir}`)
   } else {
-    ok(`vendored node 在位（${(nodeSize / 1024 / 1024).toFixed(1)}MB）`)
+    ok(`node-addon-system 原生二进制在位（${nasPkg}${nodeBin.slice(nasDir.length)}）`)
   }
 }
 

@@ -113,7 +113,7 @@ if (!existsSync(outDir)) {
 
     const appRes = join(bundle, 'Contents', 'Resources', 'app')
     const nmRoot = join(appRes, 'node_modules')
-    const deps = ['@deepseek-ai/dsh', 'electron-updater', 'koffi']
+    const deps = ['@deepseek-ai/dsh', 'electron-updater', 'koffi', '@deepseek-ai/node-addon-system']
     for (const dep of deps) {
       if (existsSync(join(nmRoot, dep))) ok(`依赖闭包：${dep}`)
       else fail(`依赖闭包缺失：${dep}（dsh 引擎将无法启动）`)
@@ -131,6 +131,15 @@ if (!existsSync(outDir)) {
       ok(`koffi 原生二进制（${koffiPkg}/${arch}）`)
     } else {
       fail(`缺 ${koffiPkg}/darwin_${arch}/koffi.node（after-pack 补全失败）`)
+    }
+
+    // node-addon-system 平台二进制（0.1.5 起取代 fs-ext 的 flock）
+    const nasPkg = `node-addon-system-darwin-${arch}`
+    const nasBin = join(nmRoot, '@deepseek-ai', nasPkg, 'bin', 'system.node')
+    if (existsSync(nasBin)) {
+      ok(`node-addon-system 原生二进制（${nasPkg}/bin/system.node）`)
+    } else {
+      fail(`缺 ${nasPkg}/bin/system.node（after-pack 补全失败，引擎会话写锁将崩）`)
     }
 
     // 平台纯净性：@koromix 下不应出现非目标架构的 koffi 平台包
