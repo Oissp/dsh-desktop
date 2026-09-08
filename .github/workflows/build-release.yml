@@ -335,7 +335,10 @@ jobs:
             out/*.deb
             out/latest-linux.yml
             out/*.blockmap
-          retention-days: 14
+          # 制品只是 build→release 的中间传递载体，最终文件已进 GitHub Release。
+          # 14 天会把存储配额撑爆（mac 产物 ~500MB/次 × 高频构建 → GB 级积压 →
+          # upload-artifact FinalizeArtifact 403）。改为 1 天，够 release job 消费即可。
+          retention-days: 1
 
   build-mac:
     name: Build macOS (arm64)
@@ -421,7 +424,8 @@ jobs:
             out/*.zip
             out/latest-mac.yml
             out/*.blockmap
-          retention-days: 14
+          # 同 release-assets：中间传递载体，1 天够 release-mac job 消费。
+          retention-days: 1
 
   release:
     name: Publish Linux Release (.deb)
