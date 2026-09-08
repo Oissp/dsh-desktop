@@ -1,39 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { WorkspaceFileNode } from '../../../shared/types'
+import { fileLabel, fmtSize, fmtTime } from '../../../shared/workspace-format'
 
 interface Props {
   /** 工作区根目录（未选择时为 null）。 */
   workspaceCwd: string | null
-}
-
-/** 扩展名 → 简单语言标签（预览标题用）。 */
-const EXT_LABEL: Record<string, string> = {
-  ts: 'TypeScript', tsx: 'TSX', js: 'JavaScript', jsx: 'JSX',
-  json: 'JSON', md: 'Markdown', css: 'CSS', html: 'HTML',
-  py: 'Python', rs: 'Rust', go: 'Go', java: 'Java', c: 'C', cpp: 'C++',
-  sh: 'Shell', yml: 'YAML', yaml: 'YAML', toml: 'TOML', txt: 'Text',
-  xml: 'XML', sql: 'SQL', vue: 'Vue', svelte: 'Svelte',
-}
-
-function fileLabel(name: string): string {
-  const i = name.lastIndexOf('.')
-  if (i < 0) return 'Text'
-  return EXT_LABEL[name.slice(i + 1).toLowerCase()] ?? name.slice(i + 1).toUpperCase()
-}
-
-function fmtSize(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(2)} MB`
-}
-
-function fmtTime(ms: number): string {
-  if (!ms) return ''
-  const d = new Date(ms)
-  const now = new Date()
-  return d.toDateString() === now.toDateString()
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
 /** 单文件/目录行。 */

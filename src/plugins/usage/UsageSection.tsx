@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { UsageData, UsageDay } from '../../../shared/types'
-import { recentUsageDays, summarizeUsage } from './UsageStore'
+import { fmt, recentUsageDays, summarizeUsage } from '../../../shared/usage-format'
 import type { PluginContext } from '../types'
 
 /** 时间范围（对齐 Alma usage 面板的周期选择，默认本月）。 */
@@ -11,14 +11,6 @@ const RANGES: { key: Range; label: string }[] = [
   { key: 'month', label: '本月' },
   { key: 'all', label: '全部' },
 ]
-
-/** 数字格式化：1.2k / 3.4m。 */
-function fmt(n: number): string {
-  if (!n) return '0'
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
-  return `${(n / 1_000_000).toFixed(2)}m`
-}
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
