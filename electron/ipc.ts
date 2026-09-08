@@ -5,12 +5,11 @@
  * dsh 上游变更永远到不了这里。
  */
 import { ipcMain, dialog, clipboard, app, shell, type BrowserWindow } from 'electron'
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, extname, join, resolve, sep } from 'node:path'
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, extname, join } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
 import type { SettingsStore } from './settings-store.js'
 import { ReminderManager } from './reminder-manager.js'
-import { addMemory, clearMemories, deleteMemory, listMemories } from './memory.js'
 import type { SafeCredentialStore } from './credential-store.js'
 import { fetchWithTimeout, isAbortError } from '../shared/fetch-timeout.js'
 import type {
@@ -22,7 +21,6 @@ import type {
   PickedFile,
   Reminder,
   WebSearchConfig,
-  WorkspaceFileNode,
 } from '../shared/types.js'
 
 /** 把归一化会话事件渲染成 Markdown（A6 会话导出）。 */
@@ -90,134 +88,6 @@ function run<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   return fn().then(ok, fail)
 }
 
-/** workspace 插件：默认忽略的目录（常见构建产物/依赖/元数据目录）。 */
-const WS_IGNORE_DIRS = new Set([
-  'node_modules',
-  '.git',
-  '.hg',
-  '.svn',
-  'dist',
-  'out',
-  'build',
-  '.cache',
-  '__pycache__',
-  '.venv',
-  'venv',
-  '.DS_Store',
-  'coverage',
-  '.idea',
-  '.vscode',
-  '.next',
-  '.turbo',
-  '.yarn',
-  '.pnpm-store',
-  'target',
-  '.alma',
-])
-
-const WS_MAX_DEPTH = 3
-const WS_MAX_ENTRIES = 800
-const WS_MAX_FILE_BYTES = 256 * 1024
-
-/** 规范化路径（解析符号链接）以防路径穿越。 */
-function realpath(p: string): string {
-  try {
-    const { realpathSync } = require('node:fs')
-    return realpathSync(p)
-  } catch {
-    return resolve(p)
-  }
-}
-
-/** 递归列出工作区文件树（深度/数量受限）。 */
-function listWorkspaceTree(
-  cwd: string,
-  opts: { maxDepth?: number; limit?: number },
-): WorkspaceFileNode[] {
-  const root = resolve(cwd)
-  if (!root || !existsSync(root) || !statSync(root).isDirectory()) {
-    throw new Error('工作区目录不存在：' + cwd)
-  }
-  const maxDepth = Math.max(1, Math.min(opts.maxDepth ?? WS_MAX_DEPTH, 6))
-  const limit = opts.limit ?? WS_MAX_ENTRIES
-  let budget = limit
-
-  const walk = (dir: string, depth: number): WorkspaceFileNode[] => {
-    if (depth > maxDepth || budget <= 0) return []
-    const out: WorkspaceFileNode[] = []
-    let names: string[]
-    try {
-      names = readdirSync(dir)
-    } catch {
-      return out
-    }
-    names.sort((a, b) => a.localeCompare(b, 'zh-CN'))
-    for (const name of names) {
-      if (budget <= 0) break
-      const full = join(dir, name)
-      let st
-      try {
-        st = statSync(full)
-      } catch {
-        continue
-      }
-      if (st.isDirectory()) {
-        if (WS_IGNORE_DIRS.has(name)) continue
-        budget -= 1
-        const children = walk(full, depth + 1)
-        out.push({
-          name,
-          path: full,
-          isDir: true,
-          size: 0,
-          mtime: st.mtimeMs,
-          children,
-        })
-      } else if (st.isFile()) {
-        budget -= 1
-        out.push({
-          name,
-          path: full,
-          isDir: false,
-          size: st.size,
-          mtime: st.mtimeMs,
-        })
-      }
-    }
-    return out
-  }
-  return walk(root, 0)
-}
-
-/** 读取工作区文件内容用于预览（限大小，限工作区根内）。 */
-function readWorkspaceFile(cwd: string, filePath: string): {
-  content: string
-  truncated: boolean
-  size: number
-} {
-  const root = resolve(cwd)
-  const target = realpath(resolve(filePath))
-  const rootReal = realpath(root)
-  if (!target.startsWith(rootReal + sep) && target !== rootReal) {
-    throw new Error('文件不在工作区内')
-  }
-  if (!existsSync(target) || !statSync(target).isFile()) {
-    throw new Error('文件不存在：' + basename(target))
-  }
-  const stat = statSync(target)
-  const size = stat.size
-  const truncated = size > WS_MAX_FILE_BYTES
-  const buf = readFileSync(target)
-  const content = truncated
-    ? buf.subarray(0, WS_MAX_FILE_BYTES).toString('utf8')
-    : buf.toString('utf8')
-  return {
-    content,
-    truncated,
-    size,
-  }
-}
-
 export function registerIpc(
   manager: DshManager,
   settings: SettingsStore,
@@ -262,26 +132,6 @@ export function registerIpc(
       }
     }),
   )
-
-  // ---- workspace 插件：工作区文件树 / 文件预览 ----
-  ipcMain.handle(
-    'desktop:listWorkspace',
-    (_e, cwd: string, opts?: { maxDepth?: number; limit?: number }) => {
-      const cwdStr = String(cwd ?? '').trim()
-      if (!cwdStr) {
-        return fail(new Error('工作区路径为空'))
-      }
-      return run(() => Promise.resolve(listWorkspaceTree(cwdStr, opts ?? {})))
-    },
-  )
-  ipcMain.handle('desktop:readWorkspaceFile', (_e, cwd: string, filePath: string) => {
-    const cwdStr = String(cwd ?? '').trim()
-    const fileStr = String(filePath ?? '').trim()
-    if (!cwdStr || !fileStr) {
-      return fail(new Error('路径参数缺失'))
-    }
-    return run(() => Promise.resolve(readWorkspaceFile(cwdStr, fileStr)))
-  })
 
   // ---- dsh 生命周期 ----
   ipcMain.handle('dsh:status', () => run(() => Promise.resolve(manager.status())))
@@ -472,14 +322,6 @@ export function registerIpc(
     run(async () => reminders.create(input)),
   )
   ipcMain.handle('reminder:delete', (_e, id: string) => run(async () => reminders.delete(id)))
-
-  // ---- Part A：记忆管理（harness-memory 存储文件） ----
-  ipcMain.handle('memory:list', () => run(async () => listMemories(manager.home)))
-  ipcMain.handle('memory:add', (_e, text: string, tags?: string[]) =>
-    run(async () => addMemory(manager.home, text, tags)),
-  )
-  ipcMain.handle('memory:delete', (_e, id: string) => run(async () => deleteMemory(manager.home, id)))
-  ipcMain.handle('memory:clear', () => run(async () => clearMemories(manager.home)))
 
   // ---- Part A：计划模式 / Web 搜索 ----
   ipcMain.handle('plan:toggle', (_e, sessionId: string) => run(() => adapter().togglePlanMode(sessionId)))

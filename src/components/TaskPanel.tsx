@@ -5,7 +5,6 @@ import WhaleLogo from './WhaleLogo'
 interface Props {
   tasks: TaskRecord[]
   onRetry: (taskId: string) => void
-  onReview: (sessionId: string, title: string) => void
   onCancel?: (sessionId: string) => void
 }
 
@@ -37,8 +36,8 @@ function duration(ms: number): string {
   return `${Math.round(ms / 6000) / 10}min`
 }
 
-/** 任务面板：类型过滤 / 进度 / 展开步骤 / 重试 / 复盘。 */
-export default function TaskPanel({ tasks, onRetry, onReview, onCancel }: Props) {
+/** 任务面板：类型过滤 / 进度 / 展开步骤 / 重试。 */
+export default function TaskPanel({ tasks, onRetry, onCancel }: Props) {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -53,7 +52,7 @@ export default function TaskPanel({ tasks, onRetry, onReview, onCancel }: Props)
       <main className="task-panel">
         <header className="task-header">
           <div className="task-title">任务</div>
-          <span className="hint">任务 → 完成 → 复盘 → 技能沉淀</span>
+          <span className="hint">任务 → 完成 → 技能沉淀</span>
         </header>
         <div className="task-empty">
           <WhaleLogo className="task-empty-logo" />
@@ -176,11 +175,6 @@ export default function TaskPanel({ tasks, onRetry, onReview, onCancel }: Props)
                 >
                   {isOpen ? '收起' : '轨迹'}
                 </button>
-                {t.status === 'done' && (
-                  <button className="btn small ghost" onClick={() => onReview(t.sessionId, t.title)}>
-                    复盘
-                  </button>
-                )}
                 {t.status === 'done' && t.summary && (
                   <button className="btn small ghost" onClick={() => copySummary(t)}>
                     {copied === t.id ? '已复制' : '复制摘要'}

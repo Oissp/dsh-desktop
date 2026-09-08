@@ -8,7 +8,6 @@ import TaskPanel from './TaskPanel'
 import SettingsModal from './SettingsModal'
 import SessionSearch from './SessionSearch'
 import { IconPanel, IconPlus, IconSearch, IconTasks, IconChat, IconSettings, IconMore } from './icons'
-import { UsageStore } from '../plugins/usage/UsageStore'
 
 const harness = window.harness
 
@@ -54,20 +53,6 @@ export default function MainView({
     })
   }, [onUpdateSettings])
 
-  // 用量统计（usage 插件）：应用启动即挂载，全局累计 token/回合/工具调用
-  const usageStoreRef = useRef<UsageStore | null>(null)
-  if (!usageStoreRef.current) {
-    usageStoreRef.current = new UsageStore((next) => {
-      void onUpdateSettings({ usage: next })
-    })
-  }
-  useEffect(() => {
-    const store = usageStoreRef.current!
-    store.load(appSettings.usage)
-    return store.attach()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   // 任务存储：从会话事件推导任务状态
   const taskStoreRef = useRef<TaskStore | null>(null)
   if (!taskStoreRef.current) {
@@ -99,44 +84,6 @@ export default function MainView({
   const startTask = useCallback((sessionId: string, title: string) => {
     taskStoreRef.current?.startTask(sessionId, title, 'chat')
   }, [])
-
-  // A1 复盘：走独立隐藏会话（已归档，不出现在会话列表），用户聊天界面干净
-  const reviewTask = useCallback(
-    async (_sessionId: string, title: string) => {
-      const auto = appSettings.evolution?.autoReview ?? true
-      if (!auto) return
-      const prompt = [
-        '【复盘】请回顾并提炼值得长期记住的内容（你面对的是一个已完成的任务，任务目标：' + title + '）：',
-        '1. 用户偏好（如喜欢简洁/中文/特定风格）→ 用 memory_save 保存，tag: preference',
-        '2. 项目约定（如用 pnpm/目录规范）→ 用 memory_save 保存，tag: project',
-        '3. 成功做法（如"处理这类任务先搜索再动手"）→ 用 memory_save 保存，tag: practice',
-        '每条记忆用一句话，简明扼要。若没有值得记住的，回复"无"。',
-      ].join('\n')
-      try {
-        // 确保存在隐藏复盘会话
-        let reviewId = appSettings.reviewSessionId ?? null
-        if (!reviewId) {
-          const created = await harness.createSession(appSettings.workspaceCwd ?? undefined)
-          if (created.ok) {
-            reviewId = created.value!.sessionId
-            await harness.archiveSession(reviewId)
-            await onUpdateSettings({ reviewSessionId: reviewId })
-          }
-        }
-        if (reviewId) await harness.sendMessage(reviewId, prompt)
-      } catch {
-        // 复盘失败不阻塞
-      }
-    },
-    [appSettings.evolution, appSettings.workspaceCwd, appSettings.reviewSessionId, onUpdateSettings],
-  )
-
-  // 自动复盘：任务完成时触发
-  useEffect(() => {
-    taskStoreRef.current?.setOnDone((task) => {
-      void reviewTask(task.sessionId, task.title)
-    })
-  }, [reviewTask])
 
   const retryTask = useCallback((taskId: string) => {
     const info = taskStoreRef.current?.retry(taskId)
@@ -610,7 +557,6 @@ export default function MainView({
           <TaskPanel
             tasks={tasks}
             onRetry={retryTask}
-            onReview={reviewTask}
             onCancel={(sessionId) => void harness.cancelTurn(sessionId)}
           />
         )}

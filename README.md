@@ -10,7 +10,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 - 内置 dsh 引擎，首次初始化后可直接使用
 - 官方 Web UI，支持流式回复、思考过程、工作区、模型和会话管理
-- 本地桌面能力：首启向导、任务与记忆管理、提醒、外观设置和归档会话查看
+- 本地桌面能力：首启向导、任务管理、提醒、外观设置和归档会话查看
 - 凭证通过 Electron `safeStorage` 加密保存；启用 CSP、导航限制和单实例锁
 - 托盘常驻、后台更新检查和下载后安装
 - 发布 Debian 13 / amd64 `.deb` 与 macOS（arm64）`.dmg` / `.zip` 安装包
@@ -60,7 +60,6 @@ React fallback UI (src/) -> preload -> IPC -> Electron main -> adapter -> dsh we
 - `adapter/`：dsh JSON-RPC / WebSocket 协议适配与事件归一化
 - `shared/`：renderer 与主进程共享的稳定类型和 IPC 契约
 - `electron/`：引擎生命周期、IPC、凭证、profile、托盘、更新和桌面桥接
-- `plugins/harness-memory/`：随 profile 安装的本地记忆插件
 
 历史交付记录保存在 [docs/history/](docs/history/)。
 

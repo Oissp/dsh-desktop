@@ -1,5 +1,5 @@
 /**
- * electron/profile-setup.ts —— 确保 dsh profile 已初始化并安装本地插件（harness-memory 记忆）。
+ * electron/profile-setup.ts —— 确保 dsh profile 已初始化并安装本地伴随插件。
  *
  * 首次启动：dsh 引擎会初始化 profile（下载依赖，耗时）。本模块负责在
  * profile 就绪后把本地插件安装进去：

@@ -38,8 +38,6 @@ export interface AppSettings {
   reminders?: Reminder[]
   /** 任务记录（app 本地，从会话事件推导）。 */
   tasks?: TaskRecord[]
-  /** 自进化开关。 */
-  evolution?: { autoReview?: boolean; autoInjectMemory?: boolean }
   /** 复盘用的隐藏会话（已归档，不出现在会话列表，复盘不污染聊天）。 */
   reviewSessionId?: string
   /** 已归档会话的本地元数据（sessionId → 标题/cwd/时间），归档时缓存，供归档分组展示与删除定位。 */
@@ -50,45 +48,6 @@ export interface AppSettings {
   appearance?: AppearanceConfig
   /** 侧边栏是否折叠为窄图标栏（app 本地，跨启动保持）。 */
   sidebarCollapsed?: boolean
-  /** 用量统计（usage 插件：从会话事件流推导，按天聚合，app 本地）。 */
-  usage?: UsageData
-}
-
-/** 单日用量聚合。 */
-export interface UsageDay {
-  /** 日期键：YYYY-MM-DD（本地时区）。 */
-  date: string
-  /** 未缓存输入 token（turn-end.usage.inputTokens 累计）。 */
-  inputTokens: number
-  /** 输出 token（turn-end.usage.outputTokens 累计）。 */
-  outputTokens: number
-  /** 缓存读取 token（turn-end.usage.cacheReadTokens 累计）。 */
-  cacheReadTokens: number
-  /** 缓存写入 token（turn-end.usage.cacheWriteTokens 累计）。 */
-  cacheWriteTokens: number
-  /** 推理 token（turn-end.usage.reasoningTokens 累计）。 */
-  reasoningTokens: number
-  /** 回合数（turn-end 计数）。 */
-  turns: number
-  /** 工具调用次数（tool-call 计数）。 */
-  tools: number
-}
-
-/** 用量统计数据结构（usage 插件持久化格式）。 */
-export interface UsageData {
-  /** 按天聚合，键为日期。 */
-  days: Record<string, UsageDay>
-}
-
-/** 工作区文件树节点（workspace 插件：由主进程列目录生成）。 */
-export interface WorkspaceFileNode {
-  name: string
-  path: string
-  isDir: boolean
-  size: number
-  mtime: number
-  /** 目录节点在展开后才填充。 */
-  children?: WorkspaceFileNode[]
 }
 
 /** 外观配置（主题/主题色/字体/密度/启动行为）。 */
@@ -161,15 +120,6 @@ export interface Reminder {
   retries?: number
   /** 周期提醒（every/daily/weekly）连续触发失败次数（上限 10 次后丢弃，成功即清零）。 */
   consecutiveFailures?: number
-}
-
-/** 一条记忆（harness-memory 插件 memories 表）。 */
-export interface MemoryItem {
-  id: string
-  text: string
-  tags: string[]
-  createdAt: number
-  updatedAt: number
 }
 
 /** Web 搜索配置。 */
@@ -478,10 +428,6 @@ export interface HarnessApi {
   listReminders(): Promise<IpcResult<Reminder[]>>
   createReminder(input: Omit<Reminder, 'id' | 'nextAt'>): Promise<IpcResult<Reminder>>
   deleteReminder(id: string): Promise<IpcResult<void>>
-  listMemories(): Promise<IpcResult<MemoryItem[]>>
-  addMemory(text: string, tags?: string[]): Promise<IpcResult<MemoryItem>>
-  deleteMemory(id: string): Promise<IpcResult<void>>
-  clearMemories(): Promise<IpcResult<void>>
   /** matched=false 表示引擎未识别 /plan 命令（版本不匹配/功能关闭），UI 不应改变本地状态。 */
   togglePlanMode(sessionId: string): Promise<IpcResult<{ matched: boolean }>>
   getWebSearchConfig(): Promise<IpcResult<WebSearchConfig>>
