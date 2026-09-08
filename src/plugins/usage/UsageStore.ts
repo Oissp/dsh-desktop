@@ -5,7 +5,7 @@
  * 推导用量，按天聚合，并持久化到 AppSettings.usage。
  * 不请求引擎额外 API，纯本地统计，跨启动保留。
  */
-import type { SessionStreamEvent, UsageData, UsageDay } from '../../../shared/types'
+import type { SessionStreamEvent, UsageData } from '../../../shared/types'
 import { dayKey, recentUsageDays, summarizeUsage } from '../../../shared/usage-format'
 import { subscribeAll } from '../../bus'
 
