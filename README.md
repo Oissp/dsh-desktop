@@ -4,14 +4,14 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 > 非 DeepSeek 官方产品，与 DeepSeek 无附属关系。
 
-![DSH Desktop](assets/screenshots/dsh-desktop.png)
-
 ## 功能
 
 - 内置 dsh 引擎，首次初始化后可直接使用
 - 官方 Web UI，支持流式回复、思考过程、工作区、模型和会话管理
-- 本地桌面能力：首启向导、任务管理、提醒、外观设置和归档会话查看
+- 本地桌面能力：首启向导、任务面板、提醒、外观设置
+- 归档会话查看（preload 注入官方侧栏面板 + 页内浮层）
 - 凭证通过 Electron `safeStorage` 加密保存；启用 CSP、导航限制和单实例锁
+- 崩溃环检测 + 配置快照恢复、落盘日志
 - 托盘常驻、后台更新检查和下载后安装
 - 发布 Debian 13 / amd64 `.deb` 与 macOS（arm64）`.dmg` / `.zip` 安装包
 
@@ -57,11 +57,11 @@ pnpm dist:mac        # 构建 macOS dmg + zip 到 out/（需在 macOS 上执行�
 React fallback UI (src/) -> preload -> IPC -> Electron main -> adapter -> dsh web engine
 ```
 
-- `adapter/`：dsh JSON-RPC / WebSocket 协议适配与事件归一化
+- `adapter/`：dsh Typert Remote 协议适配（HTTP RPC + WebSocket mux）与事件归一化
 - `shared/`：renderer 与主进程共享的稳定类型和 IPC 契约
 - `electron/`：引擎生命周期、IPC、凭证、profile、托盘、更新和桌面桥接
-
-历史交付记录保存在 [docs/history/](docs/history/)。
+- `src/`：React 回退 UI（启动向导、设置、任务面板、恢复页）
+- `scripts/`：打包钩子、校验脚本、原生模块定义
 
 ## License
 

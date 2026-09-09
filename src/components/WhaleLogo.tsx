@@ -1,5 +1,5 @@
 import { useId, useMemo } from 'react'
-import faviconRaw from '../assets/brand/favicon.svg?raw'
+import faviconRaw from '../../build/brand/favicon.svg?raw'
 
 /** 去掉 favicon 自带的 prefers-color-scheme style（改由渐变 fill 控制）。 */
 function stripStyle(svg: string): string {
