@@ -1,0 +1,10 @@
+# dsh-desktop-archived bundle patch: mount this package as a Cordis plugin.
+#
+# The panel itself is client-only (lib/client.js registers into
+# sidebar.panellist + the layout's `main` keyed slot), but the package must
+# still be mounted as a loader entry: client-modules scans mounted entries for
+# a `dsh.client` declaration and only then serves the browser bundle. An empty
+# patch list mounts nothing, so the panel would never appear.
+- insert:
+    - id: desktop-archived
+      name: dsh-desktop-archived

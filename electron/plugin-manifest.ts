@@ -31,6 +31,7 @@ export interface CompanionPluginEntry {
  * 禁用插件只需设 enabled: false（不卸载已有安装，仅不再同步）。
  */
 export const COMPANION_PLUGINS: CompanionPluginEntry[] = [
+  { id: 'dsh-desktop-archived', description: '归档会话全局面板（sidebar.panellist + main slot）' },
   // 新增伴随插件在此添加，例如：
   // { id: 'harness-pet', enabled: false, description: '桌面宠物（默认关）' },
 ]
