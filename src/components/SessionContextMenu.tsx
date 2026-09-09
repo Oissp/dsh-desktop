@@ -15,6 +15,8 @@ interface Props {
   onExport: () => void
   onArchive: () => void
   onDelete: () => void
+  /** 归档会话模式：只显示对归档会话有意义的操作（查看/复制 ID/导出/删除）。 */
+  archived?: boolean
 }
 
 type View = 'main' | 'colors' | 'confirm-archive' | 'confirm-delete'
@@ -33,6 +35,7 @@ export default function SessionContextMenu({
   onExport,
   onArchive,
   onDelete,
+  archived = false,
 }: Props) {
   const [view, setView] = useState<View>('main')
 
@@ -74,23 +77,32 @@ export default function SessionContextMenu({
     <div id="session-ctx-menu" className="ctx-menu" style={{ left, top }}>
       {view === 'main' && (
         <>
-          {item('重命名', onRename)}
-          {item(pinned ? '取消置顶' : '置顶', onTogglePin)}
-          <button className="ctx-item" onClick={() => setView('colors')}>
-            <span>外观</span>
-            <span className="ctx-arrow">›</span>
-          </button>
           {item('复制 ID', onCopyId)}
-          <div className="ctx-sep" />
-          {item('分支', onFork)}
           {item('导出', onExport)}
           <div className="ctx-sep" />
-          <button className="ctx-item" onClick={() => setView('confirm-archive')}>
-            <span>归档</span>
-          </button>
-          <button className="ctx-item danger" onClick={() => setView('confirm-delete')}>
-            <span>删除</span>
-          </button>
+          {archived ? (
+            <button className="ctx-item danger" onClick={() => setView('confirm-delete')}>
+              <span>删除</span>
+            </button>
+          ) : (
+            <>
+              {item('重命名', onRename)}
+              {item(pinned ? '取消置顶' : '置顶', onTogglePin)}
+              <button className="ctx-item" onClick={() => setView('colors')}>
+                <span>外观</span>
+                <span className="ctx-arrow">›</span>
+              </button>
+              <div className="ctx-sep" />
+              {item('分支', onFork)}
+              <div className="ctx-sep" />
+              <button className="ctx-item" onClick={() => setView('confirm-archive')}>
+                <span>归档</span>
+              </button>
+              <button className="ctx-item danger" onClick={() => setView('confirm-delete')}>
+                <span>删除</span>
+              </button>
+            </>
+          )}
         </>
       )}
 

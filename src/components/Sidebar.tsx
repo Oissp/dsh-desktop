@@ -11,7 +11,6 @@ import {
   IconRefresh,
   IconMore,
   IconChevron,
-  IconClose,
 } from './icons'
 
 interface Props {
@@ -57,6 +56,7 @@ interface MenuState {
   sessionId: string
   x: number
   y: number
+  archived?: boolean
 }
 
 export default function Sidebar({
@@ -91,7 +91,6 @@ export default function Sidebar({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [archivedCollapsed, setArchivedCollapsed] = useState(true)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
   const pinnedSet = new Set(pinnedSessionIds)
@@ -102,11 +101,11 @@ export default function Sidebar({
     setMenu(null)
   }, [])
 
-  // 三点下拉：锚定到按钮位置弹出右键菜单
-  const openMenuAt = useCallback((e: React.MouseEvent, sessionId: string) => {
+  // 三点下拉：锚定到按钮位置弹出右键菜单。archived=true 时菜单只含归档会话可用操作。
+  const openMenuAt = useCallback((e: React.MouseEvent, sessionId: string, archived = false) => {
     e.stopPropagation()
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    setMenu({ sessionId, x: rect.right - 180, y: rect.bottom + 4 })
+    setMenu({ sessionId, x: rect.right - 180, y: rect.bottom + 4, archived })
   }, [])
 
   useEffect(() => {
@@ -120,7 +119,14 @@ export default function Sidebar({
     setEditingId(null)
   }
 
-  const menuSession = menu ? sessions.find((s) => s.sessionId === menu.sessionId) ?? null : null
+  // 菜单目标会话：先查活跃会话，再查归档会话（右键/三点菜单可能作用在任一列表）
+  const menuArchived = menu?.archived ?? false
+  const menuSession = menu
+    ? sessions.find((s) => s.sessionId === menu.sessionId) ?? null
+    : null
+  const menuArchivedSession = menu
+    ? archivedSessions.find((s) => s.sessionId === menu.sessionId) ?? null
+    : null
 
   return (
     <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
@@ -243,55 +249,40 @@ export default function Sidebar({
             <span className="archived-count">{archivedSessions.length}</span>
           </button>
           {!archivedCollapsed && (
-            <div className="archived-list">
+            <div className="session-list archived-list">
               {archivedSessions.map((s) => {
                 const title = s.title || `归档会话 ${s.sessionId.slice(0, 6)}`
-                const confirming = confirmDeleteId === s.sessionId
                 const isActive = s.sessionId === activeId
                 return (
-                  <div key={s.sessionId} className={`archived-row${isActive ? ' active' : ''}`}>
-                    {confirming ? (
-                      <>
-                        <span className="archived-confirm-text">确认删除？</span>
-                        <span className="archived-confirm-actions">
-                          <button
-                            className="archived-confirm-btn danger"
-                            onClick={() => {
-                              setConfirmDeleteId(null)
-                              void onDeleteArchived(s.sessionId, s.cwd)
-                            }}
-                          >
-                            删除
-                          </button>
-                          <button
-                            className="archived-confirm-btn"
-                            onClick={() => setConfirmDeleteId(null)}
-                          >
-                            取消
-                          </button>
+                  <div
+                    key={s.sessionId}
+                    className={`session-row ${isActive ? 'active' : ''}`}
+                    onClick={() => onOpenArchive(s.sessionId, s.title || undefined)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setMenu({ sessionId: s.sessionId, x: e.clientX, y: e.clientY, archived: true })
+                    }}
+                  >
+                    <button className="session-item" title={title}>
+                      <span className="session-item-top">
+                        <span className="session-indicator" aria-hidden>
+                          <span className="session-dot" />
                         </span>
-                      </>
-                    ) : (
-                      <>
-                        <span
-                          className="archived-title"
-                          title={title + '\n点击查看会话内容'}
-                          onClick={() => onOpenArchive(s.sessionId, s.title || undefined)}
-                        >
+                        <span className="session-title" title={title}>
                           {title}
                         </span>
-                        <button
-                          className="archived-delete-btn"
-                          title="删除归档会话"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setConfirmDeleteId(s.sessionId)
-                          }}
-                        >
-                          <IconClose size={12} />
-                        </button>
-                      </>
-                    )}
+                      </span>
+                      <span className="session-meta">{formatTime(s.archivedAt ?? 0)}</span>
+                    </button>
+                    <span className="session-quick-actions">
+                      <button
+                        className="session-more-btn"
+                        title="更多"
+                        onClick={(e) => openMenuAt(e, s.sessionId, true)}
+                      >
+                        <IconMore size={15} />
+                      </button>
+                    </span>
                   </div>
                 )
               })}
@@ -312,7 +303,7 @@ export default function Sidebar({
 
       </div>
 
-      {menu && menuSession && (
+      {menu && menuSession && !menuArchived && (
         <SessionContextMenu
           x={menu.x}
           y={menu.y}
@@ -327,6 +318,24 @@ export default function Sidebar({
           onExport={() => onExport(menuSession.sessionId)}
           onArchive={() => void onArchive(menuSession.sessionId)}
           onDelete={() => void onDelete(menuSession.sessionId, menuSession.cwd)}
+        />
+      )}
+      {menu && menuArchivedSession && menuArchived && (
+        <SessionContextMenu
+          x={menu.x}
+          y={menu.y}
+          archived
+          pinned={false}
+          color={undefined}
+          onClose={() => setMenu(null)}
+          onRename={() => {}}
+          onTogglePin={() => {}}
+          onSetColor={() => {}}
+          onCopyId={() => onCopyId(menuArchivedSession.sessionId)}
+          onFork={() => {}}
+          onExport={() => onExport(menuArchivedSession.sessionId)}
+          onArchive={() => {}}
+          onDelete={() => void onDeleteArchived(menuArchivedSession.sessionId, menuArchivedSession.cwd)}
         />
       )}
     </aside>
