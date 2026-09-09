@@ -247,8 +247,9 @@ export default function Sidebar({
               {archivedSessions.map((s) => {
                 const title = s.title || `归档会话 ${s.sessionId.slice(0, 6)}`
                 const confirming = confirmDeleteId === s.sessionId
+                const isActive = s.sessionId === activeId
                 return (
-                  <div key={s.sessionId} className="archived-row">
+                  <div key={s.sessionId} className={`archived-row${isActive ? ' active' : ''}`}>
                     {confirming ? (
                       <>
                         <span className="archived-confirm-text">确认删除？</span>

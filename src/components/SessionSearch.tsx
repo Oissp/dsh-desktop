@@ -8,6 +8,8 @@ interface Props {
   archivedSessions?: SessionSummary[]
   activeId: string | null
   onSelect: (id: string) => void
+  /** 选中归档会话时的回调（本地切只读视图，不导航窗口）。 */
+  onOpenArchive?: (id: string, title?: string) => void
   onNewChat: () => void
   onClose: () => void
 }
@@ -40,7 +42,7 @@ function formatTime(ts: number): string {
  * 会话搜索面板（参考 Alma 折叠态的顶部搜索）：
  * 居中命令面板，支持 ↑/↓ 选择、Enter 打开、Esc 关闭、点击遮罩关闭。
  */
-export default function SessionSearch({ sessions, archivedSessions, activeId, onSelect, onNewChat, onClose }: Props) {
+export default function SessionSearch({ sessions, archivedSessions, activeId, onSelect, onOpenArchive, onNewChat, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -87,9 +89,9 @@ export default function SessionSearch({ sessions, archivedSessions, activeId, on
     el?.scrollIntoView({ block: 'nearest' })
   }, [cursor])
 
-  // 归档会话走只读子窗口（主区无法加载已归档会话），活跃会话正常切换
+  // 归档会话走只读视图（本地切换，复用三栏布局），活跃会话正常切换
   const commit = (r: { s: SessionSummary; archived: boolean }) => {
-    if (r.archived) void window.__desktop__?.openArchiveViewer(r.s.sessionId, r.s.title || undefined)
+    if (r.archived) onOpenArchive?.(r.s.sessionId, r.s.title || undefined)
     else onSelect(r.s.sessionId)
     onClose()
   }

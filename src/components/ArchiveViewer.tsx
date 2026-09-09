@@ -10,13 +10,16 @@ const harness = window.harness
 interface Props {
   sessionId: string
   title?: string
+  /** 返回按钮回调：从归档视图回到引擎 UI（仅在主窗口入口进入时有意义）。 */
+  onBack?: () => void
 }
 
 /**
  * 归档会话只读视图：用 archiveReducer（只处理完整消息）折叠历史快照，
- * 渲染静态消息列表，无输入框/无发送/无流式状态。
+ * 渲染静态消息列表，无输入框/无发送/无流式状态。嵌入 MainView 聊天区，
+ * 与工作区会话共享侧边栏——除不能继续对话外，其他布局一致。
  */
-export default function ArchiveViewer({ sessionId, title }: Props) {
+export default function ArchiveViewer({ sessionId, title, onBack }: Props) {
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -74,14 +77,16 @@ export default function ArchiveViewer({ sessionId, title }: Props) {
     <main className="chat-view archive-viewer">
       <header className="chat-header">
         <div className="chat-header-left">
-          <button
-            className="archive-back-btn"
-            onClick={() => void window.__desktop__.returnToEngine()}
-            title="返回会话"
-            aria-label="返回会话"
-          >
-            <IconBack size={18} />
-          </button>
+          {onBack && (
+            <button
+              className="archive-back-btn"
+              onClick={onBack}
+              title="返回会话"
+              aria-label="返回会话"
+            >
+              <IconBack size={18} />
+            </button>
+          )}
           <div className="chat-title">{archive.title || title || '归档会话'}</div>
         </div>
         <div className="chat-header-right">

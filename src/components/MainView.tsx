@@ -4,6 +4,7 @@ import { subscribeAll } from '../bus'
 import { TaskStore } from '../tasks'
 import Sidebar from './Sidebar'
 import ChatView from './ChatView'
+import ArchiveViewer from './ArchiveViewer'
 import TaskPanel from './TaskPanel'
 import SettingsModal from './SettingsModal'
 import SessionSearch from './SessionSearch'
@@ -17,6 +18,9 @@ interface Props {
   onUpdateSettings: (patch: Partial<AppSettings>) => Promise<{ ok: boolean; error?: { message?: string } }>
   sessionListVersion: number
   onSessionListTick: () => void
+  /** 初始归档会话 id（URL ?archive= 带入）：有值则进入归档只读视图。 */
+  initialArchiveId?: string | null
+  initialArchiveTitle?: string
 }
 
 export default function MainView({
@@ -25,10 +29,12 @@ export default function MainView({
   onUpdateSettings,
   sessionListVersion,
   onSessionListTick,
+  initialArchiveId,
+  initialArchiveTitle,
 }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSessionInfo[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(initialArchiveId ?? null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loadingList, setLoadingList] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -37,6 +43,9 @@ export default function MainView({
   const [apiKeyMissing, setApiKeyMissing] = useState(false)
   const [keyTick, setKeyTick] = useState(0)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
+  // 归档只读视图：非空时聊天区渲染 ArchiveViewer（只读），侧边栏仍可用切换其他会话
+  const [archiveViewId, setArchiveViewId] = useState<string | null>(initialArchiveId ?? null)
+  const [archiveViewTitle, setArchiveViewTitle] = useState<string | undefined>(initialArchiveTitle)
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   // 侧边栏折叠态持久化在设置里，重启后保持上次的形态
   const [collapsed, setCollapsed] = useState(appSettings.sidebarCollapsed ?? false)
@@ -335,6 +344,7 @@ export default function MainView({
   }, [newChat])
 
   const selectSession = useCallback((id: string) => {
+    setArchiveViewId(null) // 切到常规会话：退出归档只读视图
     setActiveId(id)
     // 切换会话时同步模式为该会话的 agent preset
     const s = sessions.find((x) => x.sessionId === id)
@@ -534,26 +544,41 @@ export default function MainView({
           onSetColor={setSessionColor}
           onFork={forkSession}
           onArchive={archiveSession}
-          onOpenArchive={(id, title) => void window.__desktop__.openArchiveViewer(id, title)}
+          onOpenArchive={(id, title) => {
+            // 侧边栏点击归档会话：本地切到归档只读视图（不重新加载窗口）
+            setArchiveViewId(id)
+            setArchiveViewTitle(title)
+            setActiveId(id) // 侧边栏高亮归档行
+            setView('chat')
+          }}
           onDelete={hardDeleteSession}
           onDeleteArchived={deleteArchivedSession}
           onExport={exportSession}
           onCopyId={copySessionId}
         />
         {view === 'chat' ? (
-          <ChatView
-            sessionId={activeId}
-            onTitleChange={() => onSessionListTick()}
-            modelsTick={modelsTick}
-            workspaceCwd={appSettings.workspaceCwd}
-            mode={mode}
-            onModeChange={setMode}
-            onChangeWorkspace={changeWorkspace}
-            apiKeyMissing={apiKeyMissing}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onTaskCreated={startTask}
-            onSessionCreated={(id) => void activateSession(id)}
-          />
+          archiveViewId ? (
+            // 归档只读视图：复用三栏布局，聊天区只读（无输入框），侧边栏可切换其他会话
+            <ArchiveViewer
+              sessionId={archiveViewId}
+              title={archiveViewTitle}
+              onBack={() => void window.__desktop__.returnToEngine()}
+            />
+          ) : (
+            <ChatView
+              sessionId={activeId}
+              onTitleChange={() => onSessionListTick()}
+              modelsTick={modelsTick}
+              workspaceCwd={appSettings.workspaceCwd}
+              mode={mode}
+              onModeChange={setMode}
+              onChangeWorkspace={changeWorkspace}
+              apiKeyMissing={apiKeyMissing}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onTaskCreated={startTask}
+              onSessionCreated={(id) => void activateSession(id)}
+            />
+          )
         ) : (
           <TaskPanel
             tasks={tasks}
@@ -568,6 +593,12 @@ export default function MainView({
           archivedSessions={archivedSearchable}
           activeId={activeId}
           onSelect={selectSession}
+          onOpenArchive={(id, title) => {
+            setArchiveViewId(id)
+            setArchiveViewTitle(title)
+            setActiveId(id)
+            setView('chat')
+          }}
           onNewChat={newChat}
           onClose={() => setSearchOpen(false)}
         />

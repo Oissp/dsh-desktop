@@ -954,6 +954,13 @@ select.input {
 .archived-row:hover {
   background: var(--dsw-bg-layer-3);
 }
+.archived-row.active {
+  background: var(--dsw-bg-layer-3);
+  outline: 1px solid var(--dsw-border-l2);
+}
+.archived-row.active .archived-delete-btn {
+  display: inline-flex;
+}
 .archived-title {
   flex: 1;
   white-space: nowrap;

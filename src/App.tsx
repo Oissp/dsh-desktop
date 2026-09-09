@@ -2,25 +2,21 @@ import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, DshStatus } from '../shared/types'
 import Wizard from './components/Wizard'
 import MainView from './components/MainView'
-import ArchiveViewer from './components/ArchiveViewer'
 import WhaleLogo from './components/WhaleLogo'
 import { emit } from './bus'
 
 const harness = window.harness
 
-/** 归档只读子窗口：URL 携带 ?archive=<sessionId> 时直接渲染归档视图，跳过常规启动流程。 */
+/** 归档只读视图：URL 携带 ?archive=<sessionId> 时进入桌面 React UI 并把归档 id
+ *  传给 MainView——复用三栏布局（侧边栏 + 聊天区），只是聊天区只读、无输入框。 */
 const archiveQuery = new URLSearchParams(window.location.search).get('archive')
 const archiveTitle = new URLSearchParams(window.location.search).get('title') ?? undefined
 
 export default function App() {
-  // 归档只读子窗口：仅渲染归档视图，不进入启动/向导/主界面流程
-  if (archiveQuery) {
-    return <ArchiveViewer sessionId={archiveQuery} title={archiveTitle} />
-  }
-  return <DesktopApp />
+  return <DesktopApp initialArchiveId={archiveQuery} initialArchiveTitle={archiveTitle} />
 }
 
-function DesktopApp() {
+function DesktopApp({ initialArchiveId, initialArchiveTitle }: { initialArchiveId: string | null; initialArchiveTitle?: string }) {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [dshStatus, setDshStatus] = useState<DshStatus | null>(null)
   const [booting, setBooting] = useState(true)
@@ -202,6 +198,8 @@ function DesktopApp() {
       onUpdateSettings={onUpdateSettings}
       sessionListVersion={sessionListVersion}
       onSessionListTick={() => setSessionListVersion((v) => v + 1)}
+      initialArchiveId={initialArchiveId}
+      initialArchiveTitle={initialArchiveTitle}
     />
   )
 }
