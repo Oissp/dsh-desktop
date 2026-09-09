@@ -1,8 +1,12 @@
 name: CI check
 
-# 小修小补的验证通道：push 到 main / PR 时跑构建 + 测试，不发版、不 bump 版本号。
+# 小修小补的验证通道：push 到 main / PR 时跑构建 + 测试 + 打包校验，不发版、不 bump 版本号。
 # 发版仍走 build-release.yml（仅 package.json 版本变更 / 定时 / dispatch 触发），
 # 因此这里刻意排除 package.json，避免发版时与 release workflow 重复跑一遍验证。
+#
+# 打包校验（package-deb job）：每次 PR/push 都实际打 .deb 并跑 verify-deb，覆盖
+# after-pack 的原生模块补全与依赖闭包完整性——这类问题只有真正打包才暴露，单靠
+# typecheck/test 发现不了（曾出现 koffi/node-addon-system 缺失带病发版）。
 on:
   push:
     branches: [main]
@@ -10,6 +14,7 @@ on:
       - 'electron/**'
       - 'src/**'
       - 'shared/**'
+      - 'adapter/**'
       - 'plugins/**'
       - 'scripts/**'
       - 'electron-builder.yml'
@@ -19,11 +24,18 @@ on:
       - 'electron/**'
       - 'src/**'
       - 'shared/**'
+      - 'adapter/**'
       - 'plugins/**'
       - 'scripts/**'
       - 'electron-builder.yml'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
+
+# 同一分支/PR 的新推送取消正在跑的旧 run，省 CI 额度（发版 workflow 不在此列，
+# 发版用独立的不可取消并发组，避免半发布）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test:
@@ -71,3 +83,56 @@ jobs:
 
       - name: Build renderer & electron main
         run: pnpm build
+
+  package-deb:
+    name: Package .deb (verify packaging)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Cache electron & electron-builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-eb-${{ hashFiles('electron-builder.yml') }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      - name: Build renderer & electron main
+        run: pnpm build
+
+      # 真正打 .deb：触发 after-pack 钩子（原生模块补全 + 依赖闭包复制 + 产物断言）。
+      # 仅打包不发版（--publish never）。这是唯一能在 PR 阶段暴露打包回归的步骤。
+      - name: Package .deb (linux x64)
+        run: npx electron-builder --linux deb --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # 校验 .deb 内容：原生二进制（koffi / node-addon-system）在位、无非目标平台
+      # prebuild 泄入、桌面集成文件齐全。与 release workflow 用同一个 verify-deb.mjs。
+      - name: Verify .deb integrity
+        run: node scripts/verify-deb.mjs

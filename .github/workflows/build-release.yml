@@ -44,6 +44,12 @@ on:
 permissions:
   contents: write   # 发 Release / 推 tag / 提交依赖升级需要写权限
 
+# 发版并发：同一 ref 同时只允许一个发版 run，且不取消进行中的——避免两个 release
+# 抢同一个 tag / 半发布状态被中途杀掉导致产物残缺。ci.yml 用的是可取消组，互不影响。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   sync-dsh:
     name: Sync dsh dependency
@@ -263,6 +269,9 @@ jobs:
         env:
           PNPM_NODE_LINKER: hoisted
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Run regression tests
         run: pnpm test
         continue-on-error: true
@@ -387,6 +396,9 @@ jobs:
         run: pnpm install --no-frozen-lockfile
         env:
           PNPM_NODE_LINKER: hoisted
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Build renderer & electron main
         run: pnpm build
