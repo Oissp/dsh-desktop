@@ -1,0 +1,25 @@
+{
+  "name": "dsh-desktop-archived",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Archived sessions panel for dsh-desktop — registers a global sidebar panel via the plugin slot API",
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js"
+  }
+}

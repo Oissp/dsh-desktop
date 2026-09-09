@@ -9,6 +9,9 @@ declare global {
       getPort(): Promise<number | null>
       getVersion(): Promise<string>
       notify(title: string, body: string): Promise<void>
+      listArchived(): Promise<import('../shared/types').ArchivedSessionInfo[]>
+      hardDeleteSession(sessionId: string, cwd?: string): Promise<boolean>
+      getHistory(sessionId: string): Promise<{ events: unknown[]; hasMore: boolean } | null>
       onEnginePort(cb: (port: number | null) => void): () => void
       onMenuEvent(cb: (action: 'new-chat' | 'open-settings') => void): () => void
     }
