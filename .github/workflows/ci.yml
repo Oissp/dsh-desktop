@@ -81,6 +81,17 @@ jobs:
       - name: Build renderer & electron main
         run: pnpm build
 
+      # 把 build 产物传给 package-deb job，避免在 Debian 容器里重复 build。
+      # dist/ 是 renderer（vite build），dist-electron/ 是 electron 主进程（tsc）。
+      - name: Upload build output
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-output
+          path: |
+            dist
+            dist-electron
+          retention-days: 1
+
   package-deb:
     name: Package .deb (Debian 13)
     needs: build-test
@@ -139,8 +150,11 @@ jobs:
         env:
           PNPM_NODE_LINKER: hoisted
 
-      - name: Build renderer & electron main
-        run: pnpm build
+      # 复用 build-test job 的 build 产物，不在 Debian 容器里重复 vite build + tsc。
+      - name: Download build output
+        uses: actions/download-artifact@v7
+        with:
+          name: build-output
 
       # 真正打 .deb：触发 after-pack 钩子（原生模块补全 + 依赖闭包复制 + 产物断言）。
       # 仅打包不发版（--publish never）。这是唯一能在 PR 阶段暴露打包回归的步骤。
