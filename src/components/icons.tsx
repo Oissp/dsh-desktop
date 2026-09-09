@@ -119,3 +119,12 @@ export function IconChevron({ collapsed, size, className }: IconProps & { collap
     </Svg>
   )
 }
+
+/** 返回箭头（归档视图返回会话）。 */
+export function IconBack({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </Svg>
+  )
+}

@@ -36,6 +36,7 @@ interface Props {
   onSetColor: (id: string, color: string) => void
   onFork: (id: string) => Promise<boolean>
   onArchive: (id: string) => Promise<boolean>
+  onOpenArchive: (id: string, title?: string) => void
   onDelete: (id: string, cwd?: string) => Promise<boolean>
   onDeleteArchived: (id: string, cwd?: string) => Promise<boolean>
   onExport: (id: string) => void
@@ -80,6 +81,7 @@ export default function Sidebar({
   onSetColor,
   onFork,
   onArchive,
+  onOpenArchive,
   onDelete,
   onDeleteArchived,
   onExport,
@@ -270,7 +272,11 @@ export default function Sidebar({
                       </>
                     ) : (
                       <>
-                        <span className="archived-title" title={title}>
+                        <span
+                          className="archived-title"
+                          title={title + '\n点击查看会话内容'}
+                          onClick={() => onOpenArchive(s.sessionId, s.title || undefined)}
+                        >
                           {title}
                         </span>
                         <button

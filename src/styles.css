@@ -960,7 +960,7 @@ select.input {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  cursor: default;
+  cursor: pointer;
 }
 .archived-delete-btn {
   display: none;
@@ -1230,6 +1230,31 @@ select.input {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.archive-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid var(--dsw-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-bg-layer-2);
+  color: var(--dsw-label-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.archive-back-btn:hover {
+  background: var(--dsw-bg-layer-3);
+  color: var(--dsw-label-primary);
 }
 .chat-header-brand {
   display: inline-flex;

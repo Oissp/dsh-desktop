@@ -165,58 +165,7 @@ function createWindow() {
 }
 
 /**
- * 在只读子窗口中打开一个归档会话，查看其历史内容。
- * 归档是单向显示过滤（无取消归档 API），会话数据仍在磁盘原位，
- * 故可复用桌面 React 渲染层 + adapter.getHistory（session/follow 流不拒绝归档会话）。
- * 子窗口加载本地 React UI 并以 ?archive=<sessionId> 触发只读归档视图。
- */
-function openArchiveViewer(sessionId: string, title?: string) {
-  const existing = BrowserWindow.getAllWindows().find((w) => {
-    const u = w.webContents.getURL()
-    return u.includes('archive=') && u.includes(encodeURIComponent(sessionId))
-  })
-  if (existing && !existing.isDestroyed()) {
-    existing.show()
-    existing.focus()
-    return
-  }
-  const win = new BrowserWindow({
-    width: 760,
-    height: 860,
-    minWidth: 460,
-    minHeight: 560,
-    title: title || '归档会话',
-    icon: join(app.getAppPath(), 'build', 'icon.png'),
-    backgroundColor: '#0f1115',
-    webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webSecurity: true,
-    },
-  })
-  // 窗口关闭时触发主窗口刷新归档列表（标题回写后立即更新显示）
-  win.on('closed', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.executeJavaScript(
-        'window.__hd_refreshArchived && window.__hd_refreshArchived()'
-      ).catch(() => {
-        // 主窗口还未加载官方 UI 或刷新函数未就绪，静默跳过
-      })
-    }
-  })
-  const query = { archive: sessionId, title: title ?? '' }
-  if (VITE_DEV_SERVER_URL) {
-    const u = new URL(VITE_DEV_SERVER_URL)
-    for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v)
-    void win.loadURL(u.toString())
-  } else {
-    void win.loadFile(join(app.getAppPath(), 'dist', 'index.html'), { query })
-  }
-}
-
-/** 移除应用顶部菜单栏：构建后窗口顶部不再显示「文件/编辑/视图」等菜单。 */
+ * 移除应用顶部菜单栏：构建后窗口顶部不再显示「文件/编辑/视图」等菜单。 */
 function setupMenu() {
   // macOS 用系统菜单栏（屏幕顶部，不侵入窗口 UI）：这是 macOS 用户找"检查更新"
   // 的惯例位置。同时提供编辑菜单——没有 Edit 菜单时 Cmd+C/V/X/A 等快捷键在
@@ -375,9 +324,14 @@ app.whenReady().then(async () => {
   updateLifecycle.start()
   disposeIpc = registerIpc(manager, settings, () => mainWindow, creds)
 
-  // 归档会话只读查看窗口（由官方 UI 注入面板触发）
+  // 归档会话只读视图：在主窗口内导航到归档视图（不再开独立子窗口）。
+  // 由官方 UI 注入的归档面板点击触发。
   ipcMain.handle('desktop:openArchiveViewer', (_e, sessionId: string, title?: string) => {
-    openArchiveViewer(String(sessionId ?? ''), typeof title === 'string' ? title : undefined)
+    windowGen?.loadArchiveView(String(sessionId ?? ''), typeof title === 'string' ? title : undefined)
+  })
+  // 从归档视图返回官方引擎 UI（归档视图头部的"返回"按钮触发）
+  ipcMain.handle('desktop:returnToEngine', () => {
+    windowGen?.returnToEngine()
   })
 
   createWindow()

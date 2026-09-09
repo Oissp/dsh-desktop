@@ -3,6 +3,7 @@ import { archiveReducer, emptyArchive, type ArchiveState } from '../archiveReduc
 import type { ChatMessage } from '../../shared/types'
 import MessageList from './MessageList'
 import WhaleLogo from './WhaleLogo'
+import { IconBack } from './icons'
 
 const harness = window.harness
 
@@ -72,7 +73,17 @@ export default function ArchiveViewer({ sessionId, title }: Props) {
   return (
     <main className="chat-view archive-viewer">
       <header className="chat-header">
-        <div className="chat-title">{archive.title || title || '归档会话'}</div>
+        <div className="chat-header-left">
+          <button
+            className="archive-back-btn"
+            onClick={() => void window.__desktop__.returnToEngine()}
+            title="返回会话"
+            aria-label="返回会话"
+          >
+            <IconBack size={18} />
+          </button>
+          <div className="chat-title">{archive.title || title || '归档会话'}</div>
+        </div>
         <div className="chat-header-right">
           <span className="chat-header-brand" title={`dsh desktop v${appVersion || '0.1.0'}`}>
             <WhaleLogo className="chat-header-brand-logo" />

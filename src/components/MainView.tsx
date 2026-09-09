@@ -534,6 +534,7 @@ export default function MainView({
           onSetColor={setSessionColor}
           onFork={forkSession}
           onArchive={archiveSession}
+          onOpenArchive={(id, title) => void window.__desktop__.openArchiveViewer(id, title)}
           onDelete={hardDeleteSession}
           onDeleteArchived={deleteArchivedSession}
           onExport={exportSession}
