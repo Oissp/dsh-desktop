@@ -1,0 +1,183 @@
+name: CI check
+
+# 验证通道：push（任意分支）/ PR 时跑构建 + 测试 + 打包校验，不发版、不 bump 版本号。
+# 发版仍走 build-release.yml（仅 package.json 版本变更 / 定时 / dispatch 触发），
+# 因此这里刻意排除 package.json，避免发版时与 release workflow 重复跑一遍验证。
+#
+# 打包校验（package-deb job）：实际打 .deb、跑 verify-deb 与运行时烟雾测试，
+# 并把 .deb 作为 artifact 上传——这样无需发 release 即可下载安装包测试。
+# 打包用与 release 同款的 Debian 13 容器，保证 glibc/库依赖与发版产物一致。
+on:
+  push:
+    # 任意分支的 push 都触发——分支上的 commit 同样需要验证与可测试的安装包。
+    # 发版 workflow 只在 main 的 package.json 变更时触发，两者不冲突。
+    # 用 paths-ignore 而非白名单 paths：源码目录可能新增，白名单会漏；
+    # 这里只排除确定不参与构建的文档/配置类文件。
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  workflow_dispatch:
+
+# 同一分支/PR 的新推送取消正在跑的旧 run，省 CI 额度（发版 workflow 不在此列，
+# 发版用独立的不可取消并发组，避免半发布）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：lockfile 未变零下载，变了靠 restore-keys 只补新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # postinstall 的 ensure-electron 会下载 Electron 二进制，缓存 ~/.cache/electron 免重复下载。
+      - name: Cache Electron binary
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build renderer & electron main
+        run: pnpm build
+
+      # 把 build 产物传给 package-deb job，避免在 Debian 容器里重复 build。
+      # dist/ 是 renderer（vite build），dist-electron/ 是 electron 主进程（tsc）。
+      - name: Upload build output
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-output
+          path: |
+            dist
+            dist-electron
+          retention-days: 1
+
+  package-deb:
+    name: Package .deb (Debian 13)
+    needs: build-test
+    # 用与 release 相同的 Debian 13 容器构建，确保 glibc/库依赖与发版产物一致；
+    # 否则 ubuntu-latest 的高版本 glibc 会链接出 Debian 13 装不上的 .deb。
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build prerequisites (Debian 13)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg git python3 make g++ xz-utils file \
+            libglib2.0-dev libsecret-1-dev libffi-dev \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2 \
+            libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 \
+            xvfb xauth
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          node --version
+          npm --version
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Cache electron & electron-builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-eb-${{ hashFiles('electron-builder.yml') }}
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      # 复用 build-test job 的 build 产物，不在 Debian 容器里重复 vite build + tsc。
+      - name: Download build output
+        uses: actions/download-artifact@v7
+        with:
+          name: build-output
+
+      # 真正打 .deb：触发 after-pack 钩子（原生模块补全 + 依赖闭包复制 + 产物断言）。
+      # 仅打包不发版（--publish never）。这是唯一能在 PR 阶段暴露打包回归的步骤。
+      - name: Package .deb (linux x64)
+        run: npx electron-builder --linux deb --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # 校验 .deb 内容：原生二进制（koffi / node-addon-system）在位、无非目标平台
+      # prebuild 泄入、桌面集成文件齐全。与 release workflow 用同一个 verify-deb.mjs。
+      - name: Verify .deb integrity
+        run: node scripts/verify-deb.mjs
+
+      # 运行时烟雾测试：实际启动 linux-unpacked 产物 8s，断言主进程不立即崩溃、
+      # 日志被创建、无模块加载失败。verify-deb 只看静态结构，这里覆盖运行时。
+      - name: Smoke test packaged runtime
+        run: xvfb-run -a node scripts/smoke-test.mjs out/linux-unpacked
+
+      # 上传 .deb 作为可下载 artifact——无需发 release 即可下载安装包测试。
+      # 保留 14 天（CI 产物非长期存储），够 PR 评审与本地安装验证用。
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-deb
+          path: out/*.deb
+          retention-days: 14

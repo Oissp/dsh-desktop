@@ -1,0 +1,496 @@
+/**
+ * electron/dsh-manager.ts —— dsh 引擎子进程生命周期管理。
+ *
+ * 职责：
+ *  - 定位 dsh 可执行入口（开发环境用系统 node，打包环境用 ELECTRON_RUN_AS_NODE）
+ *  - 以 `web --host 127.0.0.1 --port 0` 启动 dsh，随机回环端口
+ *  - 解析 stdout 拿到实际端口，轮询 host.describe 直到就绪
+ *  - 退出时优雅终止子进程（SIGTERM → SIGKILL）
+ */
+import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { app } from 'electron'
+import { DshAdapter } from '../adapter/index.js'
+import { checkProfile } from './profile-setup.js'
+import { CrashLoopDetector } from './crash-loop-detector.js'
+import { takeBootSnapshot, promoteToLastGood, restoreFromLastGood } from './guard-snapshot.js'
+import type { SessionStreamEvent } from '../shared/types.js'
+
+const READY_TIMEOUT_MS = 90_000
+const KILL_TIMEOUT_MS = 5_000
+/** 引擎稳定运行的判定时间：就绪后持续运行此时长才认定"稳定"，提升快照 + 重置崩溃环。 */
+const STABLE_BOOT_MS = 45_000
+/** 崩溃后自动重启延迟（ms）。 */
+const AUTO_RESTART_DELAY_MS = 2_000
+/** stdout 未完成行缓冲上限（字节）：远超端口 URL 行的正常长度，防止无换行输出无限累积。 */
+const STDOUT_BUF_MAX = 64 * 1024
+
+/** dsh bin.js 的候选路径（开发 = 项目 node_modules；打包 = asar 内）。 */
+function resolveDshBin(): string {
+  const candidates = [
+    join(app.getAppPath(), 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    join(process.resourcesPath ?? '', 'app.asar', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  throw new Error('无法定位 dsh 引擎（@deepseek-ai/dsh/lib/bin.js）')
+}
+
+/**
+ * 引擎版本（dsh package.json）。alpha.2 移除了 host.describe，版本改由宿主从
+ * 包清单注入（app.getVersion() 是桌面端版本，不是引擎版本）。
+ */
+function resolveEngineVersion(): string | null {
+  try {
+    const pkgRoot = dirname(dirname(resolveDshBin()))
+    const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as { version?: string }
+    return typeof pkg.version === 'string' && pkg.version.length > 0 ? pkg.version : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 解析可用的 Node 二进制。
+ * 优先级：系统 node > electron-as-node。
+ *
+ * 0.1.5 起 dsh 的原生模块均为 N-API prebuild（koffi / node-addon-system），
+ * ABI 跨 Node/Electron 稳定，打包产物无需独立 Node 运行时。
+ */
+function resolveNodeBinary(): { exec: string; isElectron: boolean } {
+  // 系统 node（开发环境）
+  const fromNpm =
+    process.env.npm_node_execpath ||
+    process.env.npm_config_node_execpath ||
+    process.env.npm_node_install_path
+  if (fromNpm && existsSync(fromNpm)) {
+    return { exec: fromNpm, isElectron: false }
+  }
+  // 兜底：electron-as-node
+  return { exec: process.execPath, isElectron: true }
+}
+
+export interface DshManagerStatus {
+  running: boolean
+  ready: boolean
+  port: number | null
+  version: string | null
+  cwd: string | null
+  provider: string | null
+  model: string | null
+  error?: string
+  /** 是否处于崩溃恢复态（崩溃环触发，需用户手动重启或已进入恢复页）。 */
+  recovery?: boolean
+}
+
+export class DshManager {
+  private proc: ChildProcess | null = null
+  private adapter: DshAdapter | null = null
+  private dshHome: string
+  private ready = false
+  private version: string | null = null
+  private hostCwd: string | null = null
+  private provider: string | null = null
+  private model: string | null = null
+  private lastError: string | null = null
+  private stopping = false
+  /** 崩溃恢复态：崩溃环触发后置 true，停止自动重启，等待手动恢复。 */
+  private recovery = false
+  /** 引擎稳定运行计时器（markGood）：就绪后 STABLE_BOOT_MS 提升快照 + 重置崩溃环。 */
+  private stableTimer: ReturnType<typeof setTimeout> | null = null
+  /** 启动 URL 携带的认证令牌（`/ ?token=`），用于换取会话 Cookie（alpha.2 强制浏览器认证）。 */
+  private launchToken: string | null = null
+  /** stdout 行缓冲：端口 URL 可能跨 chunk 分片，按行拼接后再匹配。 */
+  private stdoutBuf = ''
+  /** 崩溃环检测器。 */
+  private crashDetector = new CrashLoopDetector()
+  private statusListeners: ((s: DshManagerStatus) => void)[] = []
+  /** 事件订阅者（renderer 通过 dsh:subscribe 注册）。adapter 未就绪时排队，创建/重建后自动接入。 */
+  private eventListeners: ((evt: SessionStreamEvent) => void)[] = []
+  /** 当前 adapter 上的订阅解除函数（重建 adapter 时先解除旧的）。 */
+  private eventUnsubs: (() => void)[] = []
+
+  constructor() {
+    this.dshHome = join(app.getPath('userData'), 'dsh-home')
+  }
+
+  get adapterInstance(): DshAdapter | null {
+    return this.adapter
+  }
+
+  get home(): string {
+    return this.dshHome
+  }
+
+  /** 启动令牌（加载官方 UI 与换 Cookie 用）。 */
+  get token(): string | null {
+    return this.launchToken
+  }
+
+  /**
+   * 可靠事件订阅：adapter 就绪则立即接入；未就绪则排队，adapter 创建/重建后自动接入。
+   * @returns 解除订阅函数。
+   */
+  subscribeEvents(cb: (evt: SessionStreamEvent) => void): () => void {
+    // 按 cb 身份幂等：同一回调重复订阅不叠加。
+    // 修复 StrictMode 双挂载 / renderer 重载导致的累积订阅（事件双发、流式 delta 重复）。
+    if (this.eventListeners.includes(cb)) {
+      return () => {
+        this.eventListeners = this.eventListeners.filter((l) => l !== cb)
+      }
+    }
+    this.eventListeners.push(cb)
+    if (this.adapter) {
+      this.eventUnsubs.push(this.adapter.onSessionEvent(cb))
+    }
+    return () => {
+      this.eventListeners = this.eventListeners.filter((l) => l !== cb)
+    }
+  }
+
+  /** adapter 创建/重建后调用：为所有订阅者重新接入事件流（补订阅 + 防端口漂移）。 */
+  private rebindEventListeners() {
+    const adapter = this.adapter
+    if (!adapter) return
+    for (const unsub of this.eventUnsubs) {
+      try {
+        unsub()
+      } catch {
+        // 忽略旧订阅解除失败
+      }
+    }
+    this.eventUnsubs = []
+    for (const cb of [...this.eventListeners]) {
+      try {
+        this.eventUnsubs.push(adapter.onSessionEvent(cb))
+      } catch (err) {
+        console.error('[dsh-desktop] 事件订阅接入失败:', err)
+      }
+    }
+  }
+
+  onStatus(cb: (s: DshManagerStatus) => void): () => void {
+    this.statusListeners.push(cb)
+    return () => {
+      this.statusListeners = this.statusListeners.filter((l) => l !== cb)
+    }
+  }
+
+  private emitStatus() {
+    const s = this.status()
+    for (const listener of [...this.statusListeners]) listener(s)
+  }
+
+  status(): DshManagerStatus {
+    return {
+      running: this.proc !== null && this.proc.exitCode === null,
+      ready: this.ready,
+      port: this.adapter?.client.port ?? null,
+      version: this.version,
+      cwd: this.hostCwd,
+      provider: this.provider,
+      model: this.model,
+      error: this.lastError ?? undefined,
+      recovery: this.recovery,
+    }
+  }
+
+  /**
+   * 手动重启内核（恢复页"重启内核"按钮调用）。
+   * 清除崩溃环检测器，重新走完整 boot 流程。
+   */
+  async restart(): Promise<DshManagerStatus> {
+    this.crashDetector.reset()
+    this.recovery = false
+    this.lastError = null
+    await this.stop()
+    return this.start()
+  }
+
+  /**
+   * 从最后良好配置快照回滚后重启（恢复页"回滚配置"按钮）。
+   * 先停引擎，再把 last-good 快照恢复回 profile，然后重新 boot。
+   * 回滚 0 个文件（无 last-good）时仍重启——至少给用户一次干净重试。
+   */
+  async restoreCheckpointAndRestart(): Promise<DshManagerStatus> {
+    this.crashDetector.reset()
+    this.recovery = false
+    this.lastError = null
+    await this.stop()
+    const restored = restoreFromLastGood(this.dshHome)
+    if (restored > 0) {
+      this.lastError = `已从最后良好配置回滚 ${restored} 个文件，正在重启…`
+    }
+    return this.start()
+  }
+
+  /** 启动（若已就绪则直接返回）。返回就绪后的状态快照。 */
+  async start(): Promise<DshManagerStatus> {
+    if (this.ready && this.adapter) return this.status()
+    if (this.proc && this.proc.exitCode === null) {
+      // 已启动但尚未就绪 → 等待就绪
+      return this.waitUntilReady()
+    }
+    this.lastError = null
+
+    // 确保 profile 就绪 + 记忆插件已安装
+    const setup = checkProfile(this.dshHome, app.getAppPath())
+    if (setup.status === 'needs-priming') {
+      // 首次启动：先跑一次引擎让 profile 完成初始化，再装插件，然后正式启动
+      await this.spawn()
+      try {
+        await this.waitUntilReady()
+      } catch {
+        // profile 初始化失败也不阻塞；记录日志继续
+      }
+      await this.stop()
+      checkProfile(this.dshHome, app.getAppPath())
+    } else if (setup.status === 'skip') {
+      console.warn('[dsh-desktop] 记忆插件不可用（非致命）:', setup.reason)
+    }
+
+    // 守护瀑布：boot 前拍配置快照（失败时可回滚到 last-good）
+    // 快照失败不阻断 boot——磁盘满/权限问题不应阻止引擎启动，降级为无快照继续
+    try {
+      takeBootSnapshot(this.dshHome)
+    } catch (err) {
+      console.warn('[dsh-desktop] 配置快照失败，跳过守护瀑布:', err)
+    }
+
+    await this.spawn()
+    try {
+      return await this.waitUntilReady()
+    } catch (err) {
+      // 第一层失败：尝试回滚坏配置后重试一次（对应守护瀑布第二层）
+      const restored = restoreFromLastGood(this.dshHome)
+      if (restored > 0) {
+        console.warn('[dsh-desktop] 检测到坏配置，已从最后良好快照回滚，重试启动…')
+        // 先停止第一次的子进程：waitUntilReady 超时意味着子进程可能仍存活，
+        // 直接再 spawn 会孤儿第一个进程，且其 exit handler 会回写 this.proc
+        // 竞态破坏第二个进程的生命周期状态
+        await this.stop()
+        await this.spawn()
+        return await this.waitUntilReady()
+      }
+      throw err
+    }
+  }
+
+  private async spawn(): Promise<void> {
+    const bin = resolveDshBin()
+    const { exec, isElectron } = resolveNodeBinary()
+    const env = {
+      ...process.env,
+      DSH_HOME: this.dshHome,
+      ...(isElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    }
+    // --no-open：dsh web 默认会把 UI URL 交给系统默认浏览器打开（openBrowser 默认 true）。
+    // 桌面端已由 Electron 的 BrowserWindow 加载引擎 UI，不需要 dsh 再开浏览器，否则会
+    // 多出一个浏览器窗口（见 dsh-web-app/lib/index.js handoffBrowser）。
+    const args = ['--expose-internals', bin, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open']
+
+    const child = spawn(exec, args, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    this.proc = child
+    // 重置行缓冲，避免上一次进程的残留 stdout 串入本次端口解析
+    this.stdoutBuf = ''
+
+    const onStdout = (chunk: Buffer) => this.handleStdout(String(chunk))
+    const onStderr = (chunk: Buffer) => this.handleStderr(String(chunk))
+    child.stdout?.on('data', onStdout)
+    child.stderr?.on('data', onStderr)
+
+    child.on('error', (err) => {
+      this.lastError = `dsh 进程启动失败: ${err.message}`
+      this.emitStatus()
+    })
+
+    child.on('exit', (code, signal) => {
+      const wasRunning = this.ready
+      this.ready = false
+      // 引擎退出 → 取消稳定计时器（未达稳定，不提升快照）
+      if (this.stableTimer) {
+        clearTimeout(this.stableTimer)
+        this.stableTimer = null
+      }
+      // 显式摘除本次子进程的 stdout/stderr 监听：'exit' 可能早于管道最后的 'data'
+      // 触发（Node 文档行为），残留监听器若继续收到迟到数据会写入下一个进程
+      // 复用的 this.stdoutBuf 实例字段，污染新进程的端口解析。
+      child.stdout?.off('data', onStdout)
+      child.stderr?.off('data', onStderr)
+      this.adapter?.close()
+      this.adapter = null
+      this.proc = null
+      // 解除旧 adapter 上的订阅（eventListeners 保留，重建 adapter 后重新接入）
+      for (const unsub of this.eventUnsubs) {
+        try {
+          unsub()
+        } catch {
+          // 忽略
+        }
+      }
+      this.eventUnsubs = []
+      if (!this.stopping) {
+        this.lastError = `dsh 进程退出（code=${code ?? ''} signal=${signal ?? ''}）`
+        if (wasRunning) {
+          // 崩溃环检测：决定是否自动重启
+          const verdict = this.crashDetector.recordCrash()
+          if (verdict === 'ok') {
+            // 允许自动重启（延迟，避免立即重启竞态）
+            setTimeout(() => {
+              if (!this.stopping) void this.start().catch(() => undefined)
+            }, AUTO_RESTART_DELAY_MS)
+          } else {
+            // 崩溃环触发 → 进入恢复态，停止自动重启
+            this.recovery = true
+            this.lastError = `引擎反复崩溃（${verdict === 'tripped' ? '快环' : '慢环'}熔断），已进入恢复态。请检查配置后重启内核。`
+          }
+        }
+      }
+      this.emitStatus()
+    })
+  }
+
+  private handleStdout(chunk: string) {
+    // 按行缓冲再匹配：慢管道/高负载下端口 URL 可能跨 chunk 分片，
+    // 逐 chunk 正则会漏匹配 → adapter 不创建 → 90s 后误报"dsh 启动超时"。
+    this.stdoutBuf += chunk
+    const lines = this.stdoutBuf.split('\n')
+    // 末段可能是不完整行，留到下次拼接
+    this.stdoutBuf = lines.pop() ?? ''
+    // 端口 URL 一定在启动早期的某一行内出现；若子进程持续输出不带换行符的内容，
+    // 未完成行会无限累积。超过上限即丢弃前面部分，只保留尾部用于后续行匹配。
+    if (this.stdoutBuf.length > STDOUT_BUF_MAX) {
+      this.stdoutBuf = this.stdoutBuf.slice(-STDOUT_BUF_MAX)
+    }
+    for (const line of lines) {
+      // alpha.2：dsh web 启动即打印 `dsh web: http://127.0.0.1:<port>/?token=<token>`
+      const match = line.match(/http:\/\/127\.0\.0\.1:(\d+)(?:\/\?token=([A-Za-z0-9_-]+))?/)
+      if (match && !this.adapter) {
+        const port = Number(match[1])
+        this.launchToken = match[2] ?? null
+        const adapter = new DshAdapter(port)
+        // host.describe 在 alpha.2 已移除，版本由宿主从 dsh package.json 注入
+        adapter.setVersion(resolveEngineVersion())
+        this.adapter = adapter
+        // 事件订阅补接：adapter 刚创建，把排队/已有订阅者接上（修复订阅竞态）
+        this.rebindEventListeners()
+        // alpha.2：强制浏览器认证。用启动令牌换取会话 Cookie，
+        // 成功前 isReady()（probeReady）恒为 false → waitUntilReady 挂起等待。
+        if (this.launchToken) {
+          void this.establishAuth(adapter, this.launchToken)
+        }
+      }
+    }
+  }
+
+  /** 用启动令牌换取会话 Cookie（并发于 waitUntilReady 轮询，同样以就绪超时为界）。 */
+  private async establishAuth(adapter: DshAdapter, token: string): Promise<void> {
+    const deadline = Date.now() + READY_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (this.adapter !== adapter || this.stopping) return
+      try {
+        if (await adapter.client.exchangeToken(token)) return
+      } catch {
+        // 引擎可能尚未就绪，继续重试
+      }
+      await sleep(500)
+    }
+  }
+
+  private handleStderr(chunk: string) {
+    // 排除已知无害噪音（deprecation/warning/experimental/(node:pid) 等），
+    // 避免它们顶掉真实错误使 status.error 失真；除此之外的行都记录——
+    // 之前用"错误关键词白名单"会反过来丢弃不含这些关键词的真实致命错误
+    // （本地化消息、自定义异常、格式不同的 panic 横幅等），降低可诊断性。
+    const line = chunk.trim()
+    if (!line) return
+    if (/^\(node:\d+\)|deprecat|experimental warning/i.test(line)) return
+    this.lastError = line.slice(0, 300)
+  }
+
+  private async waitUntilReady(): Promise<DshManagerStatus> {
+    const deadline = Date.now() + READY_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (this.stopping) throw new Error('dsh 正在停止')
+      const adapter = this.adapter
+      if (adapter && (await adapter.isReady())) {
+        this.ready = true
+        try {
+          const d = await adapter.describe()
+          this.version = d.version
+          this.hostCwd = d.cwd
+          this.provider = d.provider ?? null
+          this.model = d.model ?? null
+          this.lastError = null
+        } catch {
+          // 描述失败不影响就绪
+        }
+        // 守护瀑布 markGood：引擎稳定运行 STABLE_BOOT_MS 后提升快照 + 重置崩溃环。
+        // 对应参考项目的 45s 稳定落定。若引擎在此期间崩溃，exit 回调会取消此计时器。
+        if (this.stableTimer) clearTimeout(this.stableTimer)
+        this.stableTimer = setTimeout(() => {
+          try {
+            this.crashDetector.recordGoodBoot()
+            promoteToLastGood(this.dshHome)
+          } catch (err) {
+            // 快照提升失败不 crash 主进程（磁盘满/目录被删等），仅记录
+            console.warn('[dsh-desktop] 提升最后良好快照失败:', err)
+          }
+          this.stableTimer = null
+        }, STABLE_BOOT_MS)
+        this.emitStatus()
+        return this.status()
+      }
+      await sleep(500)
+    }
+    this.lastError = 'dsh 启动超时'
+    this.emitStatus()
+    throw new Error('dsh 启动超时')
+  }
+
+  /** 优雅停止 dsh 子进程。 */
+  async stop(): Promise<void> {
+    this.stopping = true
+    // 停止时取消稳定计时器
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer)
+      this.stableTimer = null
+    }
+    const child = this.proc
+    if (!child) {
+      this.stopping = false
+      return
+    }
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        this.proc = null
+        this.adapter?.close()
+        this.adapter = null
+        this.ready = false
+        this.eventUnsubs = []
+        this.stopping = false
+        this.emitStatus()
+        resolve()
+      }
+      if (child.exitCode !== null) return done()
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        setTimeout(done, 300)
+      }, KILL_TIMEOUT_MS)
+      child.once('exit', () => {
+        clearTimeout(timer)
+        done()
+      })
+      child.kill('SIGTERM')
+    })
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}

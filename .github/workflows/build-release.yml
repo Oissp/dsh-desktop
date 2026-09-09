@@ -1,0 +1,551 @@
+name: Release (Debian + macOS)
+
+# 发版：仅当 package.json 版本号变更（手动 bump / dsh 同步 bump）或手动 dispatch 时触发。
+# 小修小补的构建 + 测试验证走 ci.yml（不发版、不 bump）。
+# 同时保留 @deepseek-ai/dsh 的 npm 版本检测：定时检测上游 latest，有新版则升级依赖
+# 并 patch-bump 应用版本号（与 dsh 版本号解耦，仅标记"依赖更新发版"），随本次发版一起发布。
+#
+# 触发：
+#   - schedule：每日 UTC 06:00 检测 dsh 上游（有更新则升级依赖 + 发版）
+#   - push 到 main（package.json 变更，即版本号 bump）：功能更新发版
+#   - 手动 workflow_dispatch（可强制重建当前版本）
+#
+# 发布产物（tag = v<package.json version>）：
+#   Linux:  dsh-desktop-<version>-x64.deb + latest-linux.yml + blockmap
+#   macOS:  dsh-desktop-<version>-arm64.dmg + .zip + latest-mac.yml + blockmap
+#   （latest-<os>.yml 是 electron-updater 检查更新必需的元数据；
+#    产物名由 electron-builder.yml 的 artifactName 统一为 ${name}-${version}-${arch}.${ext}）
+#
+# 发布拆分：Linux 与 macOS 各自独立发布到同一个 release（tag = v<version>）。
+# Linux 发布不依赖 mac 构建成功（mac 失败不卡 .deb 发版）；mac 发布排在 Linux
+# 发布之后追加产物，避免两个 job 并发抢同一个 tag。
+#
+# 幂等：若 v<version> release 已存在则跳过，避免重复发版。
+
+on:
+  schedule:
+    # 每日 UTC 06:00（= 北京时间 14:00）；GitHub cron 不保证准点，但会执行
+    - cron: '0 6 * * *'
+  push:
+    branches: [main]
+    # 仅版本号 bump 触发发版；源码改动走 ci.yml（构建+测试，不发版）。
+    paths: ['package.json']
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: '要同步到的 dsh 版本（留空 = 跟随 npm latest；仅 schedule/dispatch 时用）'
+        required: false
+        type: string
+      force:
+        description: '强制重建当前版本（即使 v<version> release 已存在）'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # 发 Release / 推 tag / 提交依赖升级需要写权限
+
+# 发版并发：同一 ref 同时只允许一个发版 run，且不取消进行中的——避免两个 release
+# 抢同一个 tag / 半发布状态被中途杀掉导致产物残缺。ci.yml 用的是可取消组，互不影响。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync-dsh:
+    name: Sync dsh dependency
+    # 仅定时 / 手动触发时检测 dsh 上游；push（功能更新）时跳过
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.diff.outputs.changed }}
+      new_version: ${{ steps.bump.outputs.new_version }}
+      old_dsh: ${{ steps.locked.outputs.locked }}
+      new_dsh: ${{ steps.target.outputs.target }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          # sync job 不做依赖安装（bumped 条件才 pnpm install），store 目录可能不存在，
+          # 关闭自动缓存避免 Post cleanup 报 Path Validation Error。
+          package-manager-cache: false
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+
+      - name: Read locked dsh version
+        id: locked
+        run: |
+          # 从 package.json 提取当前锁定的 @deepseek-ai/dsh 版本号
+          VER=$(node -e "console.log(require('./package.json').dependencies['@deepseek-ai/dsh'])")
+          echo "locked=$VER" >> "$GITHUB_OUTPUT"
+          echo "当前锁定 dsh 版本: $VER"
+
+      - name: Resolve target dsh version
+        id: target
+        run: |
+          # 手动指定版本 → 用输入值；否则查 npm registry 的 latest dist-tag
+          INPUT="${{ inputs.dsh_version }}"
+          if [ -n "$INPUT" ]; then
+            TARGET="$INPUT"
+            echo "使用手动指定的 dsh 版本: $TARGET"
+          else
+            TARGET=$(curl -fsSL --max-time 20 \
+              "https://registry.npmjs.org/@deepseek-ai%2Fdsh" \
+              | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d['dist-tags'].latest)")
+            if [ -z "$TARGET" ]; then
+              echo "::error::无法从 npm registry 查询 @deepseek-ai/dsh latest 版本"
+              exit 1
+            fi
+            echo "npm latest dsh 版本: $TARGET"
+          fi
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Compare dsh versions
+        id: diff
+        run: |
+          LOCKED="${{ steps.locked.outputs.locked }}"
+          TARGET="${{ steps.target.outputs.target }}"
+          if [ "$LOCKED" = "$TARGET" ]; then
+            echo "无上游变更（$LOCKED == $TARGET），不升级依赖"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "检测到上游变更：$LOCKED → $TARGET"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump dsh dep + patch-bump app version
+        id: bump
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          TARGET="${{ steps.target.outputs.target }}"
+          # 升级 dsh 依赖到目标版本；应用版本号 patch-bump（与 dsh 版本号解耦，
+          # 仅表示"依赖更新发版"）。--no-git-tag-version 只改 package.json，不打 tag（tag 由发版打）。
+          node -e "
+            const fs=require('fs');const p='./package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));
+            j.dependencies['@deepseek-ai/dsh']='$TARGET';
+            const m=j.version.match(/^(\d+)\.(\d+)\.(\d+)/);
+            if(!m){throw new Error('invalid app version: '+j.version);}
+            j.version=m[1]+'.'+m[2]+'.'+(Number(m[3])+1);
+            fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');
+          "
+          # 更新 lockfile 以匹配新依赖版本
+          pnpm install --no-frozen-lockfile
+          NEW_VER=$(node -e "console.log(require('./package.json').version)")
+          echo "已升级 dsh → $TARGET，应用版本号 patch-bump → $NEW_VER"
+          echo "new_version=$NEW_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bumped source
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bumped-source
+          path: |
+            package.json
+            pnpm-lock.yaml
+          retention-days: 3
+
+  detect:
+    name: Decide release
+    needs: sync-dsh
+    # sync-dsh 在 push 触发时被跳过，这里 !cancelled() 保证 detect 仍运行
+    # （用 !cancelled() 而非 always()：workflow 被手动取消时不白跑决策步骤）。
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FORCE="${{ inputs.force }}"
+          # 版本：dsh 同步 patch-bump 后用新版本；否则用检出（推送）的版本
+          VERSION="${{ needs.sync-dsh.outputs.new_version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -e "console.log(require('./package.json').version)")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "待发布版本: $VERSION"
+
+          # 幂等：v<version> release 已存在则跳过（force 可绕过）
+          if [ "$FORCE" = "true" ]; then
+            echo "::notice::强制重建模式，跳过已发布检查"
+            SHOULD_RELEASE=true
+          elif gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "v$VERSION release 已存在，跳过发布"
+            SHOULD_RELEASE=false
+          else
+            echo "v$VERSION release 不存在，继续发布"
+            SHOULD_RELEASE=true
+          fi
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+
+          # 决策写入 step summary，Actions UI 直接可见，排查 re-run 时不必下日志
+          {
+            echo "## 发版决策"
+            echo "- 触发: \`${{ github.event_name }}\`"
+            echo "- 版本: \`$VERSION\`"
+            echo "- should_release: \`$SHOULD_RELEASE\`"
+            echo "- sync-dsh: \`${{ needs.sync-dsh.result }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build .deb (Debian 13)
+    # 必须显式声明 sync-dsh：下面 "Apply bumped source" 步骤要读 needs.sync-dsh.*，
+    # 而 needs.<job> 只能访问本 job 自己 needs 列表里直接声明的 job（即使 detect
+    # 已经依赖了 sync-dsh，此处不写出来同样读不到，条件会静默判 false 被跳过——
+    # 这就是 v1.0.2 release 里 deb 文件名仍是 1.0.1 的根因）。
+    needs: [sync-dsh, detect]
+    # 显式状态门：!cancelled() 让 sync-dsh 被 skip 时不连带跳过本 job；
+    # 再要求 detect 真正成功且 should_release=true，避免拿到空输出误判。
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      # 用 Debian 13 (trixie) 容器构建，确保产物 glibc/库依赖与 Debian 13 匹配。
+      image: debian:13
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Apply bumped source (dsh sync)
+        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: bumped-source
+          path: .
+
+      - name: Cache electron & electron-builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-eb-${{ hashFiles('electron-builder.yml') }}
+
+      - name: Install build prerequisites (Debian 13)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg git python3 make g++ xz-utils file \
+            libglib2.0-dev libsecret-1-dev libffi-dev \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2 \
+            libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 \
+            xvfb xauth
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          node --version
+          npm --version
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：精确命中（lockfile 未变）零下载；
+      # lockfile 变了也能靠 restore-keys 复用旧 store，只下载新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run regression tests
+        run: pnpm test
+        continue-on-error: true
+        id: tests
+
+      - name: Warn on test failure
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "::warning::回归单测失败。可能是 dsh 上游事件结构/API 变更导致。"
+          echo "::warning::已继续构建（单测失败不阻塞发版），但请人工检查 adapter/events.ts。"
+
+      - name: Build renderer & electron main
+        run: pnpm build
+
+      - name: Package .deb (linux x64)
+        run: npx electron-builder --linux deb --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify .deb control info (Debian 13 compatibility)
+        run: |
+          DEB=$(ls out/*.deb 2>/dev/null | head -1)
+          if [ -z "$DEB" ]; then
+            echo "::error::未找到 .deb 产物"
+            exit 1
+          fi
+          echo "产物: $DEB"
+          echo "--- control ---"
+          dpkg-deb -I "$DEB"
+          echo "--- 内容(前30行) ---"
+          dpkg-deb -c "$DEB" 2>/dev/null | head -30
+
+      - name: Verify update metadata
+        run: |
+          # electron-updater 检查更新必须读到 latest-linux.yml，缺它则 checkForUpdates
+          # 直接 ERR_UPDATER_CHANNEL_FILE_NOT_FOUND。这里校验它确实生成了。
+          if [ ! -f out/latest-linux.yml ]; then
+            echo "::error::未找到 out/latest-linux.yml，桌面端检查更新将失效"
+            exit 1
+          fi
+          echo "--- latest-linux.yml ---"
+          cat out/latest-linux.yml
+
+      - name: Verify .deb integrity (PR #304 实践)
+        run: node scripts/verify-deb.mjs
+
+      - name: Smoke test packaged runtime
+        run: |
+          # 实际启动 linux-unpacked 产物 8s，断言主进程不立即崩溃、日志被创建、
+          # 无模块加载失败。verify-deb 只看静态结构，这里覆盖运行时（借鉴
+          # anywhere-labs/dsh-desktop verify-packaged-runtime）。
+          if [ ! -d out/linux-unpacked ]; then
+            echo "::error::未找到 out/linux-unpacked，烟雾测试无法执行"
+            exit 1
+          fi
+          xvfb-run -a node scripts/smoke-test.mjs out/linux-unpacked
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: |
+            out/*.deb
+            out/latest-linux.yml
+            out/*.blockmap
+          # 制品只是 build→release 的中间传递载体，最终文件已进 GitHub Release。
+          # 14 天会把存储配额撑爆（mac 产物 ~500MB/次 × 高频构建 → GB 级积压 →
+          # upload-artifact FinalizeArtifact 403）。改为 1 天，够 release job 消费即可。
+          retention-days: 1
+
+  build-mac:
+    name: Build macOS (arm64)
+    # 与 build 相同的状态门：sync-dsh 被 skip 时不连带跳过，且须 detect 成功 +
+    # should_release=true。mac 与 deb 并行构建，两者都成功才发版。
+    needs: [sync-dsh, detect]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Apply bumped source (dsh sync)
+        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: bumped-source
+          path: .
+
+      - name: Cache electron & electron-builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-eb-mac-${{ hashFiles('electron-builder.yml') }}
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      # pnpm store 是内容寻址缓存：精确命中（lockfile 未变）零下载；
+      # lockfile 变了也能靠 restore-keys 复用旧 store，只下载新增包。
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        env:
+          PNPM_NODE_LINKER: hoisted
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build renderer & electron main
+        run: pnpm build
+
+      - name: Package macOS (arm64)
+        # Electron 版本跟随 devDependencies（与 Linux 产物一致，现为 44.2.0）。
+        # 无签名证书：CSC_IDENTITY_AUTO_DISCOVERY=false + mac.identity: null → 产物未签名。
+        # 需要签名/公证时配置仓库 secrets（CSC_LINK / CSC_KEY_PASSWORD / APPLE_ID /
+        # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID）并按 electron-builder.yml 注释启用。
+        run: npx electron-builder --mac --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify macOS artifacts
+        run: node scripts/verify-mac.mjs out
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-mac
+          path: |
+            out/*.dmg
+            out/*.zip
+            out/latest-mac.yml
+            out/*.blockmap
+          # 同 release-assets：中间传递载体，1 天够 release-mac job 消费。
+          retention-days: 1
+
+  release:
+    name: Publish Linux Release (.deb)
+    needs: [sync-dsh, detect, build]
+    # 关键：必须用 !cancelled()，否则隐式 success() 会因 sync-dsh 在 push 时
+    # 被 skipped 而判定失败 → release 永远跳过 → push 发版发不出去。
+    # 只依赖 Linux build 成功：mac 构建失败不再卡死 .deb 发布（mac 由
+    # release-mac job 独立处理，排在 Linux 发布之后追加同一 release）。
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 拉取完整历史 + 标签：生成 changelog 需要 git log 到上一个 tag
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Apply bumped source (for commit)
+        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: bumped-source
+          path: .
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Show release assets
+        run: ls -lh release-assets/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 从上一个 tag 到 HEAD 的提交生成 changelog。
+          # git describe --tags --abbrev=0 返回最近可达 tag（当前版本 tag 尚未创建，
+          # 故返回上一个发版 tag）。若无历史 tag（首次发版）则取全部提交。
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$PREV_TAG" ]; then
+            echo "上一个 tag: $PREV_TAG"
+            LOG=$(git log --no-merges --pretty=format:"- %s" "$PREV_TAG"..HEAD)
+          else
+            echo "无历史 tag，取全部提交"
+            LOG=$(git log --no-merges --pretty=format:"- %s")
+          fi
+          # 多行输出通过 GITHUB_ENV 注入，避免被压成一行
+          {
+            echo "body<<EOF"
+            echo "$LOG"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Commit dsh sync bump
+        if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
+        run: |
+          # 把 dsh 依赖升级 + 应用版本号 patch-bump 提交回仓库
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json pnpm-lock.yaml
+          git commit -m "chore(sync): @deepseek-ai/dsh ${{ needs.sync-dsh.outputs.old_dsh }} → ${{ needs.sync-dsh.outputs.new_dsh }}" || true
+          git push
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          # tag 用 v<应用版本>：electron-updater 的 GitHub provider 用 semver.valid(tag)
+          # 解析 Atom feed 里的 tag，非 v<semver> 形态会被整条跳过 → 检查更新报"无可用版本"。
+          tag_name: v${{ needs.detect.outputs.version }}
+          name: DSH Desktop ${{ needs.detect.outputs.version }}
+          body: |
+            ## DSH Desktop ${{ needs.detect.outputs.version }}
+
+            ### 变更
+            ${{ env.body }}
+          # 连同 latest-linux.yml / blockmap 一起上传，缺 yml 则桌面端检查更新失败。
+          # mac 产物（dmg/zip/latest-mac.yml）由 release-mac job 追加到同一 release。
+          files: |
+            release-assets/*.deb
+            release-assets/latest-linux.yml
+            release-assets/*.blockmap
+          generate_release_notes: true
+          draft: false
+          # 任何含 '-' 的版本号都是 semver 预发布（alpha/beta/rc/dev 等），标记为 prerelease。
+          prerelease: ${{ contains(needs.detect.outputs.version, '-') }}
+
+  release-mac:
+    name: Publish macOS Release
+    # 排在 Linux 发布之后（needs: release）：Linux job 负责建 tag + release +
+    # changelog + dsh sync 提交，本 job 只把 mac 产物挂到同一个 release 上。
+    # 依赖 release.result == 'success' 而非并行建 tag，避免两个 job 抢同一个 tag。
+    # Linux 发布只依赖 build，因此 mac 构建失败不影响 .deb 发版；
+    # 反向场景（Linux 构建失败、mac 成功）会跳过本 job，mac 不单独发版——
+    # mac 通道目前未签名不可用（REPORT-017），单独发版无价值，故不做兜底。
+    needs: [sync-dsh, detect, build-mac, release]
+    if: ${{ !cancelled() && needs.build-mac.result == 'success' && needs.release.result == 'success' && needs.detect.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets-mac
+          path: release-assets-mac
+
+      - name: Show macOS assets
+        run: ls -lh release-assets-mac/
+
+      - name: Upload macOS assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          echo "追加 mac 产物到 v$VERSION"
+          # --clobber：重跑时同名 dmg/zip 已存在也不报错（幂等）
+          gh release upload "v$VERSION" \
+            release-assets-mac/*.dmg \
+            release-assets-mac/*.zip \
+            release-assets-mac/latest-mac.yml \
+            release-assets-mac/*.blockmap \
+            --repo "${{ github.repository }}" \
+            --clobber
