@@ -4,9 +4,9 @@ name: CI check
 # 发版仍走 build-release.yml（仅 package.json 版本变更 / 定时 / dispatch 触发），
 # 因此这里刻意排除 package.json，避免发版时与 release workflow 重复跑一遍验证。
 #
-# 打包校验（package-deb job）：每次 PR/push 都实际打 .deb 并跑 verify-deb，覆盖
-# after-pack 的原生模块补全与依赖闭包完整性——这类问题只有真正打包才暴露，单靠
-# typecheck/test 发现不了（曾出现 koffi/node-addon-system 缺失带病发版）。
+# 打包校验（package-deb job）：每次 PR/push 都实际打 .deb、跑 verify-deb 与运行时
+# 烟雾测试，并把 .deb 作为 artifact 上传——这样无需发 release 即可下载安装包测试。
+# 打包用与 release 同款的 Debian 13 容器，保证 glibc/库依赖与发版产物一致。
 on:
   push:
     branches: [main]
@@ -85,11 +85,31 @@ jobs:
         run: pnpm build
 
   package-deb:
-    name: Package .deb (verify packaging)
+    name: Package .deb (Debian 13)
     needs: build-test
+    # 用与 release 相同的 Debian 13 容器构建，确保 glibc/库依赖与发版产物一致；
+    # 否则 ubuntu-latest 的高版本 glibc 会链接出 Debian 13 装不上的 .deb。
     runs-on: ubuntu-latest
+    container:
+      image: debian:13
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install build prerequisites (Debian 13)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg git python3 make g++ xz-utils file \
+            libglib2.0-dev libsecret-1-dev libffi-dev \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2 \
+            libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 \
+            xvfb xauth
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          node --version
+          npm --version
 
       - name: Enable Corepack & pnpm
         run: |
@@ -118,7 +138,7 @@ jobs:
           key: ${{ runner.os }}-eb-${{ hashFiles('electron-builder.yml') }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
         env:
           PNPM_NODE_LINKER: hoisted
 
@@ -136,3 +156,17 @@ jobs:
       # prebuild 泄入、桌面集成文件齐全。与 release workflow 用同一个 verify-deb.mjs。
       - name: Verify .deb integrity
         run: node scripts/verify-deb.mjs
+
+      # 运行时烟雾测试：实际启动 linux-unpacked 产物 8s，断言主进程不立即崩溃、
+      # 日志被创建、无模块加载失败。verify-deb 只看静态结构，这里覆盖运行时。
+      - name: Smoke test packaged runtime
+        run: xvfb-run -a node scripts/smoke-test.mjs out/linux-unpacked
+
+      # 上传 .deb 作为可下载 artifact——无需发 release 即可下载安装包测试。
+      # 保留 14 天（CI 产物非长期存储），够 PR 评审与本地安装验证用。
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-deb
+          path: out/*.deb
+          retention-days: 14
