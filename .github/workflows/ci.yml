@@ -11,25 +11,21 @@ on:
   push:
     # 任意分支的 push 都触发——分支上的 commit 同样需要验证与可测试的安装包。
     # 发版 workflow 只在 main 的 package.json 变更时触发，两者不冲突。
-    paths:
-      - 'electron/**'
-      - 'src/**'
-      - 'shared/**'
-      - 'adapter/**'
-      - 'plugins/**'
-      - 'scripts/**'
-      - 'electron-builder.yml'
-      - 'pnpm-lock.yaml'
+    # 用 paths-ignore 而非白名单 paths：源码目录可能新增，白名单会漏；
+    # 这里只排除确定不参与构建的文档/配置类文件。
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
   pull_request:
-    paths:
-      - 'electron/**'
-      - 'src/**'
-      - 'shared/**'
-      - 'adapter/**'
-      - 'plugins/**'
-      - 'scripts/**'
-      - 'electron-builder.yml'
-      - 'pnpm-lock.yaml'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
   workflow_dispatch:
 
 # 同一分支/PR 的新推送取消正在跑的旧 run，省 CI 额度（发版 workflow 不在此列，
