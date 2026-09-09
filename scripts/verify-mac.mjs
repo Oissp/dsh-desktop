@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { NATIVE_MODULE_FAMILIES, familyBinaryPath } from './lib/native-modules.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'out')
 const BUNDLE_ID = 'com.dsh.desktop'
@@ -124,23 +125,19 @@ if (!existsSync(outDir)) {
       fail('缺 dist-electron/electron/main.js')
     }
 
-    // koffi 原生二进制按目标架构到位
+    // 原生二进制按目标架构到位。路径与 after-pack 共用 lib/native-modules.mjs，
+    // 避免两处硬编码不同步（prebuild 布局变化时只改共享模块一处）。
+    for (const family of NATIVE_MODULE_FAMILIES) {
+      const bin = familyBinaryPath(nmRoot, family, 'darwin', arch)
+      if (!bin) continue
+      if (existsSync(bin)) {
+        ok(`${family.name} 原生二进制（${family.scope}/${family.packageName('darwin', arch)}）`)
+      } else {
+        fail(`缺 ${family.name} 原生二进制 ${bin}（after-pack 补全失败）`)
+      }
+    }
+    // koffi 包名供下方平台纯净性检查复用
     const koffiPkg = `koffi-darwin-${arch}`
-    const koffiBin = join(nmRoot, '@koromix', koffiPkg, `darwin_${arch}`, 'koffi.node')
-    if (existsSync(koffiBin)) {
-      ok(`koffi 原生二进制（${koffiPkg}/${arch}）`)
-    } else {
-      fail(`缺 ${koffiPkg}/darwin_${arch}/koffi.node（after-pack 补全失败）`)
-    }
-
-    // node-addon-system 平台二进制（0.1.5 起取代 fs-ext 的 flock）
-    const nasPkg = `node-addon-system-darwin-${arch}`
-    const nasBin = join(nmRoot, '@deepseek-ai', nasPkg, 'bin', 'system.node')
-    if (existsSync(nasBin)) {
-      ok(`node-addon-system 原生二进制（${nasPkg}/bin/system.node）`)
-    } else {
-      fail(`缺 ${nasPkg}/bin/system.node（after-pack 补全失败，引擎会话写锁将崩）`)
-    }
 
     // 平台纯净性：@koromix 下不应出现非目标架构的 koffi 平台包
     const koromixDir = join(nmRoot, '@koromix')

@@ -13,30 +13,9 @@
 import { cpSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
-
-/**
- * 原生模块平台包族：用 optionalDependencies 分发各平台 prebuild 二进制。
- * 运行时按包名 require.resolve 平台包并加载 .node，故打包产物必须含目标平台包。
- * packageName 返回 null 表示该目标平台/架构不需要此族原生二进制。
- */
-const NATIVE_MODULE_FAMILIES = [
-  {
-    // koffi：dsh-subprocess-local 硬依赖，顶层 import 无平台门控（031：win 交叉打包必补）。
-    scope: '@koromix',
-    packageName: (platform, arch) => (arch === 'x64' || arch === 'arm64') ? `koffi-${platform}-${arch}` : null,
-    // koffi 主包 loadDynamic 按 platform_abi/koffi.node 查找。
-    binaryPath: (pkgDir, platform, arch) => join(pkgDir, `${platform}_${arch}`, 'koffi.node'),
-  },
-  {
-    // node-addon-system：0.1.5 起取代 fs-ext 的 flock（session 写锁），linux/darwin N-API prebuild。
-    // flock 仅 POSIX（linux/darwin）；Windows 走命名内核信号量，无需此包。
-    scope: '@deepseek-ai',
-    packageName: (platform, arch) =>
-      (platform === 'linux' || platform === 'darwin') ? `node-addon-system-${platform}-${arch}` : null,
-    binaryPath: (pkgDir, platform) =>
-      platform === 'linux' ? join(pkgDir, 'bin', 'glibc', 'system.node') : join(pkgDir, 'bin', 'system.node'),
-  },
-]
+// 原生模块族定义（包名/路径）抽到 lib/native-modules.mjs，供 verify-deb /
+// verify-mac / smoke-test 共用，避免路径硬编码多处不同步。
+import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
 
 /** 确保某原生模块族的平台包存在于 src（不存在则从 npm 拉取到 node_modules）。 */
 function ensureFamilyPlatformPackage(family, projectRoot, targetPlatform, targetArch, src) {
@@ -63,7 +42,8 @@ function ensureFamilyPlatformPackage(family, projectRoot, targetPlatform, target
     stdio: 'inherit',
     timeout: 120_000,
   })
-  // npm pack 输出 deepseek-ai-<pkg>-<ver>.tgz（去掉 @ 前缀），用 glob 找实际文件
+  // npm pack 输出 <scope-去@>-<pkg>-<ver>.tgz（@deepseek-ai → deepseek-ai-*，
+  // @koromix → koromix-*），用包名包含匹配两种作用域的 tarball。
   const tgzFile = readdirSync(projectRoot).find((f) => f.includes(pkgName) && f.endsWith('.tgz'))
   if (!tgzFile) throw new Error('npm pack 未生成 tarball')
   const tgz = join(projectRoot, tgzFile)

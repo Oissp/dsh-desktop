@@ -12,7 +12,9 @@
  * 用法：node scripts/verify-deb.mjs [out/xxx.deb]（缺省则取 out/*.deb 第一个）
  */
 import { openSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
 
 const deb = process.argv[2]
   ?? readdirSync('out').map((f) => `out/${f}`).filter((f) => f.endsWith('.deb')).sort()[0]
@@ -84,14 +86,21 @@ if (has((p) => p.includes('/node_modules/@deepseek-ai/'))) {
 } else {
   fail('缺 @deepseek-ai/ 依赖闭包（dsh 引擎将无法启动）')
 }
-if (has((p) => p.includes('/node_modules/@koromix/koffi-linux-x64/'))) {
-  ok('koffi 原生模块（linux-x64）存在')
-} else {
-  // koffi 是 dsh-subprocess-local 的硬依赖（顶层 import，无平台门控），
-  // 缺失会让引擎启动时崩溃。这反映 after-pack 的 ensurePlatformNativeModules
-  // 未补上（CI 容器内 pnpm 未装该 optionalDep + npm pack 兜底失败）。
-  // 标为警告而非硬失败：属独立的打包可靠性问题，需单独排查，不阻塞本次发版。
-  warn('缺 @koromix/koffi-linux-x64（dsh-subprocess-local 加载会失败，需排查 after-pack 补全逻辑）')
+// 原生模块平台二进制：after-pack 已在构建期断言它们进产物，这里是最终 .deb 内容
+// 的兜底校验——若 cpSync filter 误排（after-pack 通过但 deb 里没有），此处必须
+// 失败，否则坏包带病发版、引擎在加载原生模块时崩溃。路径定义与 after-pack 共用
+// lib/native-modules.mjs，保证两边查的是同一处。
+for (const family of NATIVE_MODULE_FAMILIES) {
+  const pkgName = family.packageName('linux', 'x64')
+  if (!pkgName) continue
+  const rel = family.binaryPath(join('node_modules', family.scope, pkgName), 'linux', 'x64')
+  if (has((p) => p.includes(rel))) {
+    ok(`${family.name} 原生二进制（${family.scope}/${pkgName}）存在`)
+  } else {
+    // after-pack 的 ensureFamilyPlatformPackage 负责补全；此处缺失说明补全后
+    // 又被 cpSync filter 误排，或 CI 容器内 pnpm 未装该 optionalDep + npm pack 兜底失败。
+    fail(`缺 ${family.scope}/${pkgName} 原生二进制（${rel}）——after-pack 补全或复制环节异常`)
+  }
 }
 // 主可执行文件：opt/<productName>/ 下无扩展名的可执行
 if (has((p) => /^\.\/opt\/[^/]+\/[^/]+$/.test(p))) {

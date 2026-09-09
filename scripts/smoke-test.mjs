@@ -12,8 +12,9 @@
  * 退出码：0 通过，1 失败。CI 中放在 verify-deb 之后。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync, statSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { NATIVE_MODULE_FAMILIES, familyBinaryPath, familyPackageDir } from './lib/native-modules.mjs'
 
 const unpackedDir = resolve(process.argv[2] ?? 'out/linux-unpacked')
 const executable = join(unpackedDir, 'dsh-desktop')
@@ -50,30 +51,19 @@ for (const dep of ['@deepseek-ai/dsh', 'electron-updater', 'koffi']) {
   }
 }
 
-// node-addon-system 平台包必须随包发布（0.1.5 起取代 fs-ext 的 flock 硬依赖）。
-// 缺失则引擎获取会话写锁时 tryLockExclusive 加载不到 N-API prebuild → 会话持久化崩。
-const nasPkg = `node-addon-system-${process.platform}-${process.arch}`
-const nasDir = join(nmRoot, '@deepseek-ai', nasPkg)
-function findNodeBinary(dir) {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      const found = findNodeBinary(full)
-      if (found) return found
-    } else if (entry.endsWith('.node')) {
-      return full
-    }
-  }
-  return null
-}
-if (!existsSync(nasDir)) {
-  fail(`node-addon-system 平台包缺失：@deepseek-ai/${nasPkg}（afterPack 需补该 prebuild）`)
-} else {
-  const nodeBin = findNodeBinary(nasDir)
-  if (!nodeBin) {
-    fail(`node-addon-system 平台包无 .node 二进制：${nasDir}`)
+// 原生模块平台二进制必须随包发布（koffi 顶层 import；node-addon-system 0.1.5 起
+// 取代 fs-ext 的会话写锁）。路径与 after-pack 共用 lib/native-modules.mjs——不递归
+// 扫描，避免包布局变化时扫到残留旧文件误绿或与 after-pack 结论矛盾。
+for (const family of NATIVE_MODULE_FAMILIES) {
+  const pkgDir = familyPackageDir(nmRoot, family, process.platform, process.arch)
+  if (!pkgDir) continue
+  const bin = familyBinaryPath(nmRoot, family, process.platform, process.arch)
+  if (!existsSync(pkgDir)) {
+    fail(`${family.name} 平台包缺失：${pkgDir.slice(nmRoot.length)}（afterPack 需补该 prebuild）`)
+  } else if (!bin || !existsSync(bin)) {
+    fail(`${family.name} 平台包无 .node 二进制：${pkgDir}`)
   } else {
-    ok(`node-addon-system 原生二进制在位（${nasPkg}${nodeBin.slice(nasDir.length)}）`)
+    ok(`${family.name} 原生二进制在位（${bin.slice(nmRoot.length)}）`)
   }
 }
 
