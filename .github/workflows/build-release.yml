@@ -11,9 +11,10 @@ name: Release (Debian + macOS)
 #   - 手动 workflow_dispatch（可强制重建当前版本）
 #
 # 发布产物（tag = v<package.json version>）：
-#   Linux:  dsh-desktop_<version>_amd64.deb + latest-linux.yml + blockmap
+#   Linux:  dsh-desktop-<version>-x64.deb + latest-linux.yml + blockmap
 #   macOS:  dsh-desktop-<version>-arm64.dmg + .zip + latest-mac.yml + blockmap
-#   （latest-<os>.yml 是 electron-updater 检查更新必需的元数据）
+#   （latest-<os>.yml 是 electron-updater 检查更新必需的元数据；
+#    产物名由 electron-builder.yml 的 artifactName 统一为 ${name}-${version}-${arch}.${ext}）
 #
 # 发布拆分：Linux 与 macOS 各自独立发布到同一个 release（tag = v<version>）。
 # Linux 发布不依赖 mac 构建成功（mac 失败不卡 .deb 发版）；mac 发布排在 Linux

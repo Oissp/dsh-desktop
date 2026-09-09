@@ -1,15 +1,16 @@
 name: CI check
 
-# 小修小补的验证通道：push 到 main / PR 时跑构建 + 测试 + 打包校验，不发版、不 bump 版本号。
+# 验证通道：push（任意分支）/ PR 时跑构建 + 测试 + 打包校验，不发版、不 bump 版本号。
 # 发版仍走 build-release.yml（仅 package.json 版本变更 / 定时 / dispatch 触发），
 # 因此这里刻意排除 package.json，避免发版时与 release workflow 重复跑一遍验证。
 #
-# 打包校验（package-deb job）：每次 PR/push 都实际打 .deb、跑 verify-deb 与运行时
-# 烟雾测试，并把 .deb 作为 artifact 上传——这样无需发 release 即可下载安装包测试。
+# 打包校验（package-deb job）：实际打 .deb、跑 verify-deb 与运行时烟雾测试，
+# 并把 .deb 作为 artifact 上传——这样无需发 release 即可下载安装包测试。
 # 打包用与 release 同款的 Debian 13 容器，保证 glibc/库依赖与发版产物一致。
 on:
   push:
-    branches: [main]
+    # 任意分支的 push 都触发——分支上的 commit 同样需要验证与可测试的安装包。
+    # 发版 workflow 只在 main 的 package.json 变更时触发，两者不冲突。
     paths:
       - 'electron/**'
       - 'src/**'
@@ -71,7 +72,7 @@ jobs:
           key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
         env:
           PNPM_NODE_LINKER: hoisted
 
