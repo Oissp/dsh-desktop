@@ -28,7 +28,9 @@ export interface CompanionPluginEntry {
  * 伴随插件清单（单一来源）。
  *
  * 新增插件只需在此数组加一条目 + 在 plugins/<id>/ 放插件源码。
- * 禁用插件只需设 enabled: false（不卸载已有安装，仅不再同步）。
+ * 移除清单或设 enabled: false 后，下一次启动 profile-setup 会从
+ * dsh.profile.bundles 与 profile node_modules 一并清理该插件（不再加载，
+ * 插件列表消失）；重新加入清单则自动重装（每次启动都重新同步源码）。
  */
 export const COMPANION_PLUGINS: CompanionPluginEntry[] = [
   { id: 'dsh-desktop-archived', description: '归档会话全局面板（sidebar.panellist + main slot）' },

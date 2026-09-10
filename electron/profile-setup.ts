@@ -8,7 +8,7 @@
  *
  * 之后启动：插件已存在，直接跳过。
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { activeCompanionPlugins } from './plugin-manifest.js'
 import { healCorruptConfig } from './guard-snapshot.js'
@@ -26,6 +26,18 @@ const BUNDLE_PLUGINS = activeCompanionPlugins().map((p) => p.id)
  * 启动后核心功能缺失或引用未定义。本地插件叠在核心层之后。
  */
 const CORE_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
+
+/**
+ * 计算应从 profile 清理的过期 bundle：非核心层、非当前清单、且为裸包名
+ * （伴随插件都是裸包名，@scope 的是引擎/核心包）的已登记 bundle。
+ * 清单移除某插件（如旧版 harness-memory）后，旧安装仍残留在 bundles 与
+ * node_modules，dsh 会继续加载并在插件列表显示——这里负责收尾。
+ */
+export function diffStaleBundles(registered: string[], managed: string[]): string[] {
+  return registered.filter(
+    (name) => !name.startsWith('@') && !CORE_PROFILE_BUNDLES.includes(name) && !managed.includes(name),
+  )
+}
 
 export type ProfileSetupResult =
   | { status: 'ready' } // profile 就绪且插件已安装
@@ -101,5 +113,26 @@ export function checkProfile(dshHome: string, appPath: string): ProfileSetupResu
   for (const name of BUNDLE_PLUGINS) {
     if (!installOne(dshHome, appPath, name)) anyFail = true
   }
+
+  // 清理清单已移除的旧插件安装（如旧版 harness-memory）：从 bundles 与
+  // node_modules 一并移除，否则 dsh 仍会加载并在插件列表显示。幂等，每次启动
+  // 都跑。仅处理裸包名，不动 @scope 的引擎/核心包。
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const bundles = manifest?.dsh?.profile?.bundles ?? []
+    const stale = diffStaleBundles(bundles, BUNDLE_PLUGINS)
+    if (stale.length > 0) {
+      manifest.dsh = {
+        ...(manifest.dsh ?? {}),
+        profile: { ...(manifest.dsh?.profile ?? {}), bundles: bundles.filter((n: string) => !stale.includes(n)) },
+      }
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+      for (const name of stale) rmSync(pluginTargetDir(dshHome, name), { recursive: true, force: true })
+      console.log(`[dsh-desktop] 清理已移除的插件: ${stale.join(', ')}`)
+    }
+  } catch (err) {
+    console.error('[dsh-desktop] 清理旧插件失败:', err)
+  }
+
   return anyFail ? { status: 'skip', reason: '部分插件安装失败' } : { status: 'ready' }
 }
