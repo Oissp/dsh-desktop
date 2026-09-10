@@ -4,7 +4,7 @@
  * 主进程通过这个类访问 dsh 的全部能力。dsh 上游变更只会影响
  * DshClient（dsh-client.ts）与 normalize*（events.ts），本文件尽量薄。
  */
-import { DshClient, type RemoteStream } from './dsh-client.js'
+import { DshClient } from './dsh-client.js'
 import { normalizeHistory } from './events.js'
 import type { DshEvent } from './events.js'
 import type {
@@ -17,8 +17,6 @@ import type {
 
 export class DshAdapter {
   readonly client: DshClient
-  /** 已打开的 session/follow 流（sessionId → stream），为归档只读视图提供历史。 */
-  private follows = new Map<string, RemoteStream>()
 
   constructor(port: number) {
     this.client = new DshClient(port)
@@ -98,27 +96,24 @@ export class DshAdapter {
 
   /**
    * 拉取归档会话历史：通过 session/follow 流，首帧 snapshot 即完整历史。
-   * 归档只读视图用（官方 UI 的归档面板 overlay）。
+   * 归档只读视图用（官方 UI 的归档面板 overlay）。读完首帧即取消流——
+   * 后续实时帧无人消费，留着会让每条不同会话的 follow 子流常驻 mux 连接。
    */
   async getHistory(sessionId: string): Promise<{ events: SessionStreamEvent[]; hasMore: boolean }> {
-    const prev = this.follows.get(sessionId)
-    if (prev) {
-      prev.onItem = null
-      this.client.muxCancel(prev)
-      this.follows.delete(sessionId)
-    }
     const stream = this.client.followSession(sessionId)
-    this.follows.set(sessionId, stream)
-    const first = (await stream.first()) as Record<string, unknown> | null | undefined
-    // 归档只读视图只消费 snapshot；后续实时帧丢弃（防止无人消费时无限积压）
-    stream.onItem = () => {}
-    if (first && first.type === 'snapshot') {
-      return {
-        events: normalizeHistory((first.records as unknown[] | undefined) ?? []),
-        hasMore: Boolean((first as { hasMore?: boolean }).hasMore),
+    try {
+      const first = (await stream.first()) as Record<string, unknown> | null | undefined
+      if (first && first.type === 'snapshot') {
+        return {
+          events: normalizeHistory((first.records as unknown[] | undefined) ?? []),
+          hasMore: Boolean((first as { hasMore?: boolean }).hasMore),
+        }
       }
+      return { events: [], hasMore: false }
+    } finally {
+      stream.onItem = null
+      this.client.muxCancel(stream)
     }
-    return { events: [], hasMore: false }
   }
 
   async sendMessage(sessionId: string, text: string): Promise<{ accepted: boolean }> {
@@ -204,11 +199,6 @@ export class DshAdapter {
   }
 
   close() {
-    for (const stream of this.follows.values()) {
-      stream.onItem = null
-      this.client.muxCancel(stream)
-    }
-    this.follows.clear()
     this.client.close()
   }
 }

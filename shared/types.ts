@@ -30,6 +30,12 @@ export interface AppSettings {
   sessionTitleSnapshot?: Record<string, { title: string; at: number }>
   /** 已归档会话的本地元数据（sessionId → 标题/cwd/时间），归档时缓存，供归档分组展示与删除定位。 */
   archivedSessionMeta?: Record<string, { title?: string; cwd?: string; archivedAt?: number }>
+  /**
+   * 已彻底删除的会话 id（墓碑）。dsh 无删除/取消归档 RPC，workspace 归档集合
+   * 只增不减，硬删后 id 仍留在 archivedSessionIds 形成"幽灵行"；这里记录后
+   * listArchived 过滤掉，保证插件面板里删除即消失。
+   */
+  purgedSessionIds?: string[]
 }
 
 /** 会话摘要（来自 session.list 的归一化视图）。 */

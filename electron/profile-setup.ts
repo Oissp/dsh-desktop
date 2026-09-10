@@ -21,6 +21,12 @@ import { healCorruptConfig } from './guard-snapshot.js'
 const BUNDLE_PLUGINS = activeCompanionPlugins().map((p) => p.id)
 
 /**
+ * 桌面端安装标记：installOne 复制插件后写入该文件，清理时只删除带标记的
+ * 目录——用户手动装进 profile 的插件不携带标记，仅取消登记、保留源码。
+ */
+const DESKTOP_MANAGED_MARKER = '.dsh-desktop-managed'
+
+/**
  * web profile 的核心 in-box bundle（来自 dsh-app-boot 的 PROFILE_TEMPLATES.web）。
  * 坏配置自愈重建时必须保留这些核心层，否则 dsh 会丢掉 base/web-app，
  * 启动后核心功能缺失或引用未定义。本地插件叠在核心层之后。
@@ -65,6 +71,8 @@ function installOne(dshHome: string, appPath: string, name: string): boolean {
   try {
     mkdirSync(join(target, '..'), { recursive: true })
     cpSync(src, target, { recursive: true })
+    // 标记为桌面端安装（清理时据此区分用户自装插件）
+    writeFileSync(join(target, DESKTOP_MANAGED_MARKER), 'desktop-managed\n')
     const manifestPath = join(dshHome, 'profiles', 'web', 'package.json')
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -127,7 +135,13 @@ export function checkProfile(dshHome: string, appPath: string): ProfileSetupResu
         profile: { ...(manifest.dsh?.profile ?? {}), bundles: bundles.filter((n: string) => !stale.includes(n)) },
       }
       writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
-      for (const name of stale) rmSync(pluginTargetDir(dshHome, name), { recursive: true, force: true })
+      for (const name of stale) {
+        const target = pluginTargetDir(dshHome, name)
+        // 只删桌面端安装的（带标记）；用户自装插件仅取消登记、保留源码。
+        if (existsSync(join(target, DESKTOP_MANAGED_MARKER))) {
+          rmSync(target, { recursive: true, force: true })
+        }
+      }
       console.log(`[dsh-desktop] 清理已移除的插件: ${stale.join(', ')}`)
     }
   } catch (err) {

@@ -119,18 +119,22 @@ export function registerIpc(
       const list = await adapter().listArchivedSessions()
       // 合并本地元数据（标题/归档时间）：adapter 只返回引擎的归档 ID 列表，
       // 标题等桌面端缓存的额外信息需从 app-settings.json 读取后合并。
-      // 标题优先取活跃会话标题快照（方案 A：归档后 dsh 无处可查，归档前快照兜底）。
+      // 标题优先取持久 meta（归档时写入，无 TTL），再退回活跃会话标题快照。
+      // 硬删过的 id 在墓碑集合里，过滤掉引擎的幽灵行。
       const state = settings.get()
       const meta = state.archivedSessionMeta ?? {}
       const snapshot = state.sessionTitleSnapshot ?? {}
-      return list.map((item) => {
-        const cached = meta[item.sessionId]
-        return {
-          ...item,
-          title: snapshot[item.sessionId]?.title ?? cached?.title,
-          archivedAt: cached?.archivedAt,
-        }
-      })
+      const purged = new Set(state.purgedSessionIds ?? [])
+      return list
+        .filter((item) => !purged.has(item.sessionId))
+        .map((item) => {
+          const cached = meta[item.sessionId]
+          return {
+            ...item,
+            title: cached?.title ?? snapshot[item.sessionId]?.title,
+            archivedAt: cached?.archivedAt,
+          }
+        })
     }),
   )
   ipcMain.handle('session:history', (_e, sessionId: string) => run(() => adapter().getHistory(sessionId)))
@@ -158,6 +162,14 @@ export function registerIpc(
         if (existsSync(sessionDir)) rmSync(sessionDir, { recursive: true, force: true })
       } catch {
         // 文件清理失败不阻塞：会话已归档（从列表消失），数据可能残留但不可见
+      }
+      // dsh 无删除/取消归档 RPC，workspace 归档集合只增不减：硬删后 id 仍留在
+      // archivedSessionIds，刷新会重现幽灵行（文件已删、cwd 映射消失后更删不掉）。
+      // 记墓碑，listArchived 过滤掉。
+      const purged = new Set(settings.get().purgedSessionIds ?? [])
+      if (!purged.has(sessionId)) {
+        purged.add(sessionId)
+        settings.update({ purgedSessionIds: [...purged] })
       }
     }),
   )
@@ -222,18 +234,61 @@ export function registerIpc(
   // ---- 会话标题快照（归档列表标题兜底，P2 方案 A） ----
   // dsh 归档 baseline 只给 sessionId + cwd，标题归档后无处可查；这里周期性
   // 快照活跃会话标题，归档后列表仍能显示标题（TTL 内保留已归档条目）。
+  // 会话从活跃列表消失（= 被归档）时顺带写持久 meta（标题 + 归档时间），
+  // 归档列表的标题/时间不再受 7 天 TTL 限制。
   const TITLE_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000
   const TITLE_SNAPSHOT_INTERVAL_MS = 60 * 1000
+  const TITLE_SNAPSHOT_HEARTBEAT_MS = 5 * 60 * 1000
   let engineReadySeen = false
+  let titleSnapshotLastWrite = 0
+
+  /** 快照内容是否变化（忽略 at 刷新）：id 集合或标题变了才算。 */
+  function titleSnapshotChanged(
+    a: Record<string, { title: string; at: number }>,
+    b: Record<string, { title: string; at: number }>,
+  ): boolean {
+    const ka = Object.keys(a)
+    const kb = Object.keys(b)
+    if (ka.length !== kb.length) return true
+    for (const k of ka) {
+      if (!b[k] || a[k].title !== b[k].title) return true
+    }
+    return false
+  }
 
   const takeTitleSnapshot = async () => {
     const a = manager.adapterInstance
     if (!a) return
     try {
       const sessions = await a.listSessions()
-      const prev = settings.get().sessionTitleSnapshot
-      const next = foldTitleSnapshot(prev, sessions, Date.now(), TITLE_SNAPSHOT_TTL_MS)
-      settings.update({ sessionTitleSnapshot: next })
+      const now = Date.now()
+      const state = settings.get()
+      const prevSnapshot = state.sessionTitleSnapshot ?? {}
+      const nextSnapshot = foldTitleSnapshot(prevSnapshot, sessions, now, TITLE_SNAPSHOT_TTL_MS)
+      const patch: Partial<AppSettings> = {}
+
+      // 活跃→消失的会话视为归档：写持久 meta（标题 + 归档时间）。已墓碑的
+      // （硬删）不记，避免污染归档元数据。
+      const activeIds = new Set(sessions.map((s) => s.sessionId))
+      const purged = new Set(state.purgedSessionIds ?? [])
+      const prevMeta = state.archivedSessionMeta ?? {}
+      const nextMeta = { ...prevMeta }
+      for (const [id, v] of Object.entries(prevSnapshot)) {
+        if (!activeIds.has(id) && !(id in nextMeta) && !purged.has(id)) {
+          nextMeta[id] = { title: v.title, archivedAt: now }
+        }
+      }
+      if (Object.keys(nextMeta).length !== Object.keys(prevMeta).length) patch.archivedSessionMeta = nextMeta
+
+      // 快照落盘：内容变化或本批有 meta 写入时立即写；仅 at 刷新每 5 分钟
+      // 兜底一次（活跃会话 at 要新鲜，保证归档时 TTL 从归档时刻起算），
+      // 避免每 60s 无条件全量写 app-settings.json。
+      const changed = titleSnapshotChanged(prevSnapshot, nextSnapshot)
+      if (changed || 'archivedSessionMeta' in patch || now - titleSnapshotLastWrite >= TITLE_SNAPSHOT_HEARTBEAT_MS) {
+        patch.sessionTitleSnapshot = nextSnapshot
+        titleSnapshotLastWrite = now
+      }
+      if (Object.keys(patch).length > 0) settings.update(patch)
     } catch {
       // 引擎瞬时不可用：跳过本次快照，下轮再试
     }

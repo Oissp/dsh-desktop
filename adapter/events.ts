@@ -115,8 +115,25 @@ export function normalizeSessionEvent(
       break
     }
     case 'turn/end': {
-      // 回合结束 → running:false（思考完成/转圈停止的关键）；usage 等明细丢弃
+      // 回合结束 → running:false（思考完成/转圈停止的关键）。usage 等明细丢弃，
+      // 但失败 reason 透传：只报 running:false 会让中止回合被误判为正常结束，
+      // 归档只读视图也无从显示失败原因。
       out.push({ kind: 'running', sessionId, running: false })
+      const reason = data.reason as
+        | { error?: { message?: string }; failure?: { message?: string } }
+        | undefined
+      const turnErr = reason?.error?.message ?? reason?.failure?.message
+      if (turnErr) {
+        out.push({
+          kind: 'assistant-end',
+          sessionId,
+          seq,
+          turn: Number(data.turn ?? 1),
+          step: Number(data.step ?? 1),
+          message: { id: `end-${seq}`, blocks: [] },
+          error: turnErr,
+        })
+      }
       break
     }
     case 'assistant/chunk': {

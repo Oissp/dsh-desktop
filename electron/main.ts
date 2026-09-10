@@ -40,6 +40,8 @@ let trayHintShown = false
 // 注意：macOS 自动更新依赖代码签名（017）；未签名时自动更新被禁用，静默跳过。
 autoUpdater.autoDownload = true
 autoUpdater.autoInstallOnAppQuit = true
+// 仅稳定渠道：历史上为 0.1.x 预发布版用户跨通道升级设过 allowPrerelease+channel
+// 的 hack，但公开发行的桌面包全是稳定 1.0.x（无 rc/alpha 用户），已移除。
 
 // 更新生命周期实例（app.whenReady 中创建）。单飞检查、安装前 recheck、
 // 按版本去重后台提示，见 electron/update-lifecycle.ts。

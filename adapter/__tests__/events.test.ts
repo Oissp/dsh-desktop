@@ -73,15 +73,16 @@ describe('adapter/events normalizeSessionEvent', () => {
     expect(out[0]).toMatchObject({ kind: 'running', running: false })
   })
 
-  it('turn/end error 同样只推 running:false（错误经 assistant-end 透传）', () => {
+  it('turn/end 错误 reason 经 assistant-end 透传（含 running:false）', () => {
     const raw = {
       ...base,
       type: 'turn/end',
       data: { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } },
     } as unknown as DshEvent
     const out = normalizeSessionEvent('s1', raw)
-    expect(out).toHaveLength(1)
+    expect(out).toHaveLength(2)
     expect(out[0]).toMatchObject({ kind: 'running', running: false })
+    expect(out[1]).toMatchObject({ kind: 'assistant-end', error: 'boom' })
   })
 
   it('user/message 仅 source.kind=user 通过', () => {

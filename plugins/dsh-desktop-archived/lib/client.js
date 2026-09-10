@@ -355,6 +355,40 @@ window.__ModuleLoader__.load({
 			return () => archState.listeners.delete(fn);
 		}
 
+		/**
+		 * 共享归档列表轮询：归档面板与侧边栏组共用一条 15s 轮询，避免各开一条
+		 * workspace/follow 流与重复渲染。首个订阅者启动，最后一个退订时停止。
+		 */
+		const sharedArchives = {
+			sessions: [],
+			listeners: new Set(),
+			timer: null,
+			async refresh() {
+				const desktop = window.__desktop__;
+				if (!desktop || !desktop.listArchived) return;
+				try {
+					const list = await desktop.listArchived();
+					sharedArchives.sessions = list || [];
+					for (const fn of sharedArchives.listeners) fn(sharedArchives.sessions);
+				} catch { /* transient bridge failure: keep the last list */ }
+			},
+			subscribe(fn) {
+				sharedArchives.listeners.add(fn);
+				if (!sharedArchives.timer) {
+					void sharedArchives.refresh();
+					sharedArchives.timer = setInterval(() => void sharedArchives.refresh(), 15000);
+				}
+				fn(sharedArchives.sessions);
+				return () => {
+					sharedArchives.listeners.delete(fn);
+					if (sharedArchives.listeners.size === 0 && sharedArchives.timer) {
+						clearInterval(sharedArchives.timer);
+						sharedArchives.timer = null;
+					}
+				};
+			}
+		};
+
 		// Filled in apply(); the sidebar group (not a slot component) needs the
 		// layout controller and a bound locale function.
 		let layoutCtl = null;
@@ -375,6 +409,8 @@ window.__ModuleLoader__.load({
 
 			react.useEffect(() => {
 				let cancelled = false;
+				// 切换会话时先清空旧转录，避免新历史加载中仍显示上一个会话的内容。
+				setState({ phase: "loading", messages: [], title });
 				(async () => {
 					const desktop = window.__desktop__;
 					if (!desktop || !desktop.getHistory) {
@@ -512,29 +548,15 @@ window.__ModuleLoader__.load({
 		 * group.
 		 */
 		function ArchivedPanel({ t }) {
-			const [sessions, setSessions] = react.useState([]);
+			const [sessions, setSessions] = react.useState(() => sharedArchives.sessions);
 			const [viewing, setViewing] = react.useState(archState.viewing);
 			const [pendingDelete, setPendingDelete] = react.useState(null);
 			const [now, setNow] = react.useState(() => Date.now());
 
 			// A selection made in the sidebar group updates this panel live.
 			react.useEffect(() => subscribeArchViewing((v) => setViewing(v)), []);
-
-			const refresh = react.useCallback(async () => {
-				const desktop = window.__desktop__;
-				if (!desktop || !desktop.listArchived) return;
-				try {
-					const list = await desktop.listArchived();
-					setSessions(list || []);
-					setNow(Date.now());
-				} catch { /* transient bridge failure: keep the last list */ }
-			}, []);
-
-			react.useEffect(() => {
-				refresh();
-				const id = setInterval(refresh, 15000);
-				return () => clearInterval(id);
-			}, [refresh]);
+			// Shared 15s poller: one list + one workspace/follow stream for both surfaces.
+			react.useEffect(() => sharedArchives.subscribe((list) => { setSessions(list); setNow(Date.now()); }), []);
 
 			if (viewing) {
 				return jsx(ArchivedViewer, {
@@ -565,7 +587,7 @@ window.__ModuleLoader__.load({
 								confirming: pendingDelete === s.sessionId,
 								onOpen: () => setArchViewing({ sessionId: s.sessionId, title: s.title }),
 								onAskDelete: () => setPendingDelete(s.sessionId),
-								onConfirmDelete: () => { setPendingDelete(null); void removeArchived(s.sessionId, s.cwd, refresh); },
+								onConfirmDelete: () => { setPendingDelete(null); void removeArchived(s.sessionId, s.cwd, sharedArchives.refresh); },
 								onCancelDelete: () => setPendingDelete(null)
 							}, s.sessionId))
 					}),
@@ -580,27 +602,14 @@ window.__ModuleLoader__.load({
 		 * too narrow for a list).
 		 */
 		function ArchiveSidebarGroup({ rail }) {
-			const [sessions, setSessions] = react.useState([]);
+			const [sessions, setSessions] = react.useState(() => sharedArchives.sessions);
 			const [open, setOpen] = react.useState(true);
 			const [pendingDelete, setPendingDelete] = react.useState(null);
 			const [now, setNow] = react.useState(() => Date.now());
 			const t = localeT;
 
-			const refresh = react.useCallback(async () => {
-				const desktop = window.__desktop__;
-				if (!desktop || !desktop.listArchived) return;
-				try {
-					const list = await desktop.listArchived();
-					setSessions(list || []);
-					setNow(Date.now());
-				} catch { /* transient bridge failure: keep the last list */ }
-			}, []);
-
-			react.useEffect(() => {
-				refresh();
-				const id = setInterval(refresh, 15000);
-				return () => clearInterval(id);
-			}, [refresh]);
+			// Shared 15s poller: same list as the panel, no second follow stream.
+			react.useEffect(() => sharedArchives.subscribe((list) => { setSessions(list); setNow(Date.now()); }), []);
 
 			// No archived sessions: hide the group entirely (both rail and expanded).
 			if (sessions.length === 0) return null;
@@ -653,7 +662,7 @@ window.__ModuleLoader__.load({
 							confirming: pendingDelete === s.sessionId,
 							onOpen: () => openViewer(s),
 							onAskDelete: () => setPendingDelete(s.sessionId),
-							onConfirmDelete: () => { setPendingDelete(null); void removeArchived(s.sessionId, s.cwd, refresh); },
+							onConfirmDelete: () => { setPendingDelete(null); void removeArchived(s.sessionId, s.cwd, sharedArchives.refresh); },
 							onCancelDelete: () => setPendingDelete(null)
 						}, s.sessionId))
 					}),
@@ -671,19 +680,29 @@ window.__ModuleLoader__.load({
 		 */
 		function ArchiveSidebarHost({ wide }) {
 			const [region, setRegion] = react.useState(null);
+			const retryRef = react.useRef(null);
 
 			react.useLayoutEffect(() => {
 				if (region) return; // anchored once; the node is stable across shell re-renders
-				const host = document.querySelector('[data-hd-arch-host="1"]');
-				if (!host) return;
-				let el = host;
-				let area = null;
-				while (el) {
-					const prev = el.previousElementSibling;
-					if (prev && getComputedStyle(prev).overflow === 'hidden') { area = prev; break; }
-					el = el.parentElement;
-				}
-				if (area) setRegion(area);
+				let attempts = 0;
+				const find = () => {
+					const host = document.querySelector('[data-hd-arch-host="1"]');
+					if (host) {
+						let el = host;
+						let area = null;
+						while (el) {
+							const prev = el.previousElementSibling;
+							if (prev && getComputedStyle(prev).overflow === 'hidden') { area = prev; break; }
+							el = el.parentElement;
+						}
+						if (area) { setRegion(area); return; }
+					}
+					// 引擎侧边栏可能晚于插件面板挂载：最多重试 5 秒（20 × 250ms），
+					// 避免一次定位失败后归档组永久缺失。
+					if (attempts++ < 20) retryRef.current = setTimeout(find, 250);
+				};
+				find();
+				return () => { if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; } };
 			}, [region]);
 
 			return jsxs(Fragment, {
