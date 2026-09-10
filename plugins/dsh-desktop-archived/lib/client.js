@@ -602,6 +602,9 @@ window.__ModuleLoader__.load({
 				return () => clearInterval(id);
 			}, [refresh]);
 
+			// No archived sessions: hide the group entirely (both rail and expanded).
+			if (sessions.length === 0) return null;
+
 			// Rail: one affordance that asks the shell to expand the column.
 			if (rail) {
 				return jsx("div", {
@@ -616,9 +619,6 @@ window.__ModuleLoader__.load({
 					})
 				});
 			}
-
-			// No archived sessions: hide the group entirely.
-			if (sessions.length === 0) return null;
 
 			const openViewer = (s) => {
 				setArchViewing({ sessionId: s.sessionId, title: s.title });
