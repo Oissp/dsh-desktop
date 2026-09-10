@@ -872,7 +872,8 @@ select.input {
   border-radius: var(--dsw-radius-sm);
   padding: 1px;
 }
-.session-row:hover .session-quick-actions {
+.session-row:hover .session-quick-actions,
+.session-row.active .session-quick-actions {
   display: flex;
 }
 .session-more-btn {
@@ -936,11 +937,12 @@ select.input {
   font-size: 11px;
 }
 .archived-list {
-  /* 归档会话行复用 session-row 样式，这里只补列表间距 */
+  /* 归档会话行复用 session-row 样式；padding 清零——外层 .archived-group
+     已有 padding: 4px 8px，.session-list 的 padding 会叠加导致内边距翻倍。 */
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 2px;
+  padding: 2px 0 0;
 }
 .sidebar-footer {
   display: flex;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArchivedSessionInfo, SessionSummary } from '../../shared/types'
+import { formatTime } from '../format'
 import SessionContextMenu from './SessionContextMenu'
 import {
   IconPanel,
@@ -41,21 +42,110 @@ interface Props {
   onCopyId: (id: string) => void
 }
 
-function formatTime(ts: number): string {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  const sameDay = d.toDateString() === now.toDateString()
-  return sameDay
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
-}
-
 interface MenuState {
   sessionId: string
   x: number
   y: number
   archived?: boolean
+}
+
+/** 统一的会话行数据：工作区会话与归档会话共用此形状渲染。 */
+interface SessionRowData {
+  sessionId: string
+  title: string
+  timestamp: number
+  running?: boolean
+  pinned?: boolean
+  color?: string
+}
+
+interface SessionRowProps {
+  data: SessionRowData
+  active: boolean
+  editing?: boolean
+  editValue?: string
+  editInputRef?: React.Ref<HTMLInputElement>
+  onEditChange?: (value: string) => void
+  onEditCommit?: () => void
+  onEditCancel?: () => void
+  onSelect: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+  onMore: (e: React.MouseEvent) => void
+  onRename?: () => void
+}
+
+/** 会话行：工作区会话与归档会话共用。归档行不传 running/pinned/color/onRename，
+ *  自然不渲染 spinner/置顶标记/颜色条/双击重命名——差异由传入的 props 决定。 */
+function SessionRow({
+  data,
+  active,
+  editing,
+  editValue,
+  editInputRef,
+  onEditChange,
+  onEditCommit,
+  onEditCancel,
+  onSelect,
+  onContextMenu,
+  onMore,
+  onRename,
+}: SessionRowProps) {
+  const { title, timestamp, running, pinned, color } = data
+  return (
+    <div
+      className={`session-row ${active ? 'active' : ''}`}
+      onClick={() => {
+        if (!editing) onSelect()
+      }}
+      onContextMenu={onContextMenu}
+    >
+      {color && <span className="session-color-strip" style={{ background: color }} />}
+      <button className="session-item" title={title}>
+        <span className="session-item-top">
+          <span className="session-indicator" aria-hidden>
+            {running ? <span className="session-spinner" /> : <span className="session-dot" />}
+          </span>
+          {editing ? (
+            <input
+              ref={editInputRef}
+              className="session-rename-input"
+              value={editValue}
+              placeholder="会话标题"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onEditChange?.(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onEditCommit?.()
+                if (e.key === 'Escape') onEditCancel?.()
+              }}
+              onBlur={() => onEditCommit?.()}
+            />
+          ) : (
+            <span
+              className="session-title"
+              title={title}
+              onDoubleClick={(e) => {
+                if (onRename) {
+                  e.stopPropagation()
+                  onRename()
+                }
+              }}
+            >
+              {pinned && <span className="pin-mark">顶</span>}
+              {title}
+            </span>
+          )}
+        </span>
+        <span className="session-meta">{formatTime(timestamp)}</span>
+      </button>
+      {!editing && (
+        <span className="session-quick-actions">
+          <button className="session-more-btn" title="更多" onClick={onMore}>
+            <IconMore size={15} />
+          </button>
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function Sidebar({
@@ -126,6 +216,12 @@ export default function Sidebar({
     ? archivedSessions.find((s) => s.sessionId === menu.sessionId) ?? null
     : null
 
+  // 兜底：菜单打开期间会话从列表消失（被外部事件归档/删除）→ 两处查找都为 null，
+  // 菜单无法渲染但 menu 状态残留。这里检测到后清除，避免过期菜单状态滞留。
+  useEffect(() => {
+    if (menu && !menuSession && !menuArchivedSession) setMenu(null)
+  }, [menu, menuSession, menuArchivedSession])
+
   return (
     <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="sidebar-inner">
@@ -170,65 +266,31 @@ export default function Sidebar({
           const color = sessionColors[s.sessionId] || undefined
           const isEditing = editingId === s.sessionId
           return (
-            <div
+            <SessionRow
               key={s.sessionId}
-              className={`session-row ${isActive ? 'active' : ''}`}
-              onClick={() => {
-                if (!isEditing) onSelect(s.sessionId)
+              data={{
+                sessionId: s.sessionId,
+                title: s.title || '新会话',
+                timestamp: s.updatedAt,
+                running: s.running,
+                pinned: isPinned,
+                color,
               }}
+              active={isActive}
+              editing={isEditing}
+              editValue={editValue}
+              editInputRef={editInputRef}
+              onEditChange={setEditValue}
+              onEditCommit={() => void commitRename()}
+              onEditCancel={() => setEditingId(null)}
+              onSelect={() => onSelect(s.sessionId)}
               onContextMenu={(e) => {
                 e.preventDefault()
                 setMenu({ sessionId: s.sessionId, x: e.clientX, y: e.clientY })
               }}
-            >
-              {color && <span className="session-color-strip" style={{ background: color }} />}
-              <button className="session-item" title={s.title}>
-                <span className="session-item-top">
-                  <span className="session-indicator" aria-hidden>
-                    {s.running ? <span className="session-spinner" /> : <span className="session-dot" />}
-                  </span>
-                  {isEditing ? (
-                    <input
-                      ref={editInputRef}
-                      className="session-rename-input"
-                      value={editValue}
-                      placeholder="会话标题"
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void commitRename()
-                        if (e.key === 'Escape') setEditingId(null)
-                      }}
-                      onBlur={() => void commitRename()}
-                    />
-                  ) : (
-                    <span
-                      className="session-title"
-                      title={s.title || '新会话'}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation()
-                        startRename(s)
-                      }}
-                    >
-                      {isPinned && <span className="pin-mark">顶</span>}
-                      {s.title || '新会话'}
-                    </span>
-                  )}
-                </span>
-                <span className="session-meta">{formatTime(s.updatedAt)}</span>
-              </button>
-              {!isEditing && (
-                <span className="session-quick-actions">
-                  <button
-                    className="session-more-btn"
-                    title="更多"
-                    onClick={(e) => openMenuAt(e, s.sessionId)}
-                  >
-                    <IconMore size={15} />
-                  </button>
-                </span>
-              )}
-            </div>
+              onMore={(e) => openMenuAt(e, s.sessionId)}
+              onRename={() => startRename(s)}
+            />
           )
         })}
       </div>
@@ -252,35 +314,23 @@ export default function Sidebar({
                 const title = s.title || `归档会话 ${s.sessionId.slice(0, 6)}`
                 const isActive = s.sessionId === activeId
                 return (
-                  <div
+                  <SessionRow
                     key={s.sessionId}
-                    className={`session-row ${isActive ? 'active' : ''}`}
+                    data={{
+                      sessionId: s.sessionId,
+                      title,
+                      timestamp: s.archivedAt ?? 0,
+                    }}
+                    active={isActive}
+                    onSelect={() => {
+                      /* 归档会话查看由官方插件面板处理，点击行不切换会话 */
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       setMenu({ sessionId: s.sessionId, x: e.clientX, y: e.clientY, archived: true })
                     }}
-                  >
-                    <button className="session-item" title={title}>
-                      <span className="session-item-top">
-                        <span className="session-indicator" aria-hidden>
-                          <span className="session-dot" />
-                        </span>
-                        <span className="session-title" title={title}>
-                          {title}
-                        </span>
-                      </span>
-                      <span className="session-meta">{formatTime(s.archivedAt ?? 0)}</span>
-                    </button>
-                    <span className="session-quick-actions">
-                      <button
-                        className="session-more-btn"
-                        title="更多"
-                        onClick={(e) => openMenuAt(e, s.sessionId, true)}
-                      >
-                        <IconMore size={15} />
-                      </button>
-                    </span>
-                  </div>
+                    onMore={(e) => openMenuAt(e, s.sessionId, true)}
+                  />
                 )
               })}
             </div>
@@ -300,41 +350,28 @@ export default function Sidebar({
 
       </div>
 
-      {menu && menuSession && !menuArchived && (
-        <SessionContextMenu
-          x={menu.x}
-          y={menu.y}
-          pinned={pinnedSet.has(menuSession.sessionId)}
-          color={sessionColors[menuSession.sessionId] || undefined}
-          onClose={() => setMenu(null)}
-          onRename={() => startRename(menuSession)}
-          onTogglePin={() => onTogglePin(menuSession.sessionId)}
-          onSetColor={(c) => onSetColor(menuSession.sessionId, c)}
-          onCopyId={() => onCopyId(menuSession.sessionId)}
-          onFork={() => void onFork(menuSession.sessionId)}
-          onExport={() => onExport(menuSession.sessionId)}
-          onArchive={() => void onArchive(menuSession.sessionId)}
-          onDelete={() => void onDelete(menuSession.sessionId, menuSession.cwd)}
-        />
-      )}
-      {menu && menuArchivedSession && menuArchived && (
-        <SessionContextMenu
-          x={menu.x}
-          y={menu.y}
-          archived
-          pinned={false}
-          color={undefined}
-          onClose={() => setMenu(null)}
-          onRename={() => {}}
-          onTogglePin={() => {}}
-          onSetColor={() => {}}
-          onCopyId={() => onCopyId(menuArchivedSession.sessionId)}
-          onFork={() => {}}
-          onExport={() => onExport(menuArchivedSession.sessionId)}
-          onArchive={() => {}}
-          onDelete={() => void onDeleteArchived(menuArchivedSession.sessionId, menuArchivedSession.cwd)}
-        />
-      )}
+      {menu && (menuSession || menuArchivedSession) && (() => {
+        const sid = menuArchived ? menuArchivedSession!.sessionId : menuSession!.sessionId
+        const cwd = menuArchived ? menuArchivedSession!.cwd : menuSession!.cwd
+        return (
+          <SessionContextMenu
+            x={menu.x}
+            y={menu.y}
+            archived={menuArchived}
+            pinned={menuArchived ? false : pinnedSet.has(sid)}
+            color={menuArchived ? undefined : (sessionColors[sid] || undefined)}
+            onClose={() => setMenu(null)}
+            onRename={() => menuSession && startRename(menuSession)}
+            onTogglePin={() => onTogglePin(sid)}
+            onSetColor={(c) => onSetColor(sid, c)}
+            onCopyId={() => onCopyId(sid)}
+            onFork={() => void onFork(sid)}
+            onExport={() => onExport(sid)}
+            onArchive={() => void onArchive(sid)}
+            onDelete={() => void (menuArchived ? onDeleteArchived(sid, cwd) : onDelete(sid, cwd))}
+          />
+        )
+      })()}
     </aside>
   )
 }

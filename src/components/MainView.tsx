@@ -380,6 +380,8 @@ export default function MainView({
         delete next[sessionId]
         await onUpdateSettings({ archivedSessionMeta: next })
       }
+      // 删掉正在高亮的归档会话：清除 activeId，否则侧栏 activeId 指向不存在的条目。
+      setActiveId((cur) => (cur === sessionId ? null : cur))
       await refreshArchived()
       return true
     },

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '../../shared/types'
+import { formatTime } from '../format'
 import { IconSearch, IconClose, IconChat } from './icons'
 
 interface Props {
@@ -24,16 +25,6 @@ function Highlight({ text, query }: { text: string; query: string }) {
       {text.slice(idx + query.length)}
     </>
   )
-}
-
-function formatTime(ts: number): string {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  const sameDay = d.toDateString() === now.toDateString()
-  return sameDay
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
 /**
