@@ -30,8 +30,6 @@ export class MainWindowGeneration {
   private readonly hooks: WindowGenerationHooks
   /** 当前窗口指向的引擎端口（防重复 loadURL；导航白名单精确匹配）。 */
   private loadedEnginePort: number | null = null
-  /** 最近一次加载官方 UI 用的 token：从归档视图返回时复用，免去重新取 token。 */
-  private engineToken: string | null = null
   private released = false
   /** 应用正在退出（更新或关机）：close 处理器据此放行窗口关闭，不再 hide 到托盘。 */
   private quitting = false
@@ -99,7 +97,6 @@ export class MainWindowGeneration {
     if (this.released || this.win.isDestroyed()) return
     if (this.loadedEnginePort === port) return
     this.loadedEnginePort = port
-    this.engineToken = token
     const url = `http://127.0.0.1:${port}/?token=${encodeURIComponent(token ?? '')}`
     let attempt = 0
     const tryLoad = (): void => {
@@ -118,42 +115,6 @@ export class MainWindowGeneration {
       })
     }
     tryLoad()
-  }
-
-  /**
-   * 在主窗口内打开归档只读视图（替代独立子窗口）。
-   * 加载本地 React UI 并以 ?archive=<sessionId> 触发归档视图；引擎端口保留，
-   * 供 returnToEngine() 重新加载官方 UI。导航白名单放行 file://，故无需改白名单。
-   */
-  loadArchiveView(sessionId: string, title?: string): void {
-    if (this.released || this.win.isDestroyed()) return
-    const { devServerUrl, appPath } = this.hooks
-    const query: Record<string, string> = { archive: sessionId }
-    if (title) query.title = title
-    if (devServerUrl) {
-      const u = new URL(devServerUrl)
-      for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v)
-      void this.win.loadURL(u.toString())
-    } else {
-      void this.win.loadFile(join(appPath, 'dist', 'index.html'), { query })
-    }
-  }
-
-  /**
-   * 从归档视图返回官方引擎 UI。复用上次 loadEngineUI 记录的端口与 token；
-   * 无可用端口（引擎未就绪/已退出）时回退到本地启动屏。
-   */
-  returnToEngine(): void {
-    if (this.released || this.win.isDestroyed()) return
-    if (this.loadedEnginePort !== null) {
-      // 清掉 loadedEnginePort 以绕过 loadEngineUI 的同端口去重守卫，强制重载
-      const port = this.loadedEnginePort
-      const token = this.engineToken
-      this.loadedEnginePort = null
-      this.loadEngineUI(port, token)
-    } else {
-      this.loadFallback()
-    }
   }
 
   /** 幂等释放：解绑监听。窗口本身的销毁由 Electron 的 closed 事件处理。 */

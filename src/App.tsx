@@ -7,16 +7,11 @@ import { emit } from './bus'
 
 const harness = window.harness
 
-/** 归档只读视图：URL 携带 ?archive=<sessionId> 时进入桌面 React UI 并把归档 id
- *  传给 MainView——复用三栏布局（侧边栏 + 聊天区），只是聊天区只读、无输入框。 */
-const archiveQuery = new URLSearchParams(window.location.search).get('archive')
-const archiveTitle = new URLSearchParams(window.location.search).get('title') ?? undefined
-
 export default function App() {
-  return <DesktopApp initialArchiveId={archiveQuery} initialArchiveTitle={archiveTitle} />
+  return <DesktopApp />
 }
 
-function DesktopApp({ initialArchiveId, initialArchiveTitle }: { initialArchiveId: string | null; initialArchiveTitle?: string }) {
+function DesktopApp() {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [dshStatus, setDshStatus] = useState<DshStatus | null>(null)
   const [booting, setBooting] = useState(true)
@@ -198,8 +193,6 @@ function DesktopApp({ initialArchiveId, initialArchiveTitle }: { initialArchiveI
       onUpdateSettings={onUpdateSettings}
       sessionListVersion={sessionListVersion}
       onSessionListTick={() => setSessionListVersion((v) => v + 1)}
-      initialArchiveId={initialArchiveId}
-      initialArchiveTitle={initialArchiveTitle}
     />
   )
 }

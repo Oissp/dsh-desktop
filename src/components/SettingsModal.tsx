@@ -4,10 +4,8 @@ import CustomProviders from './CustomProviders'
 import CredentialsSection from './CredentialsSection'
 import RemindersSection from './RemindersSection'
 import ConsoleSection from './ConsoleSection'
-import SkillsSection from './SkillsSection'
 import AppearanceSection from './AppearanceSection'
 import UpdateSection from './UpdateSection'
-import EvolutionSection from './EvolutionSection'
 
 const harness = window.harness
 
@@ -21,18 +19,14 @@ interface Props {
   onWorkspaceChanged: () => void
   onProvidersChanged: () => void
   onPlanToggle: (active: boolean) => void
-  skillSuggestions: { type: string; count: number }[]
-  onGenerateSkill: (sessionId: string, type: string) => void
 }
 
-type NavKey = 'general' | 'models' | 'automation' | 'skills' | 'evolution' | 'advanced'
+type NavKey = 'general' | 'models' | 'automation' | 'advanced'
 
 const NAV: { key: NavKey; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'models', label: '模型与凭证' },
   { key: 'automation', label: '提醒与自动化' },
-  { key: 'skills', label: '技能' },
-  { key: 'evolution', label: '进化' },
   { key: 'advanced', label: '高级' },
 ]
 
@@ -46,8 +40,6 @@ export default function SettingsModal({
   onWorkspaceChanged,
   onProvidersChanged,
   onPlanToggle,
-  skillSuggestions,
-  onGenerateSkill,
 }: Props) {
   const [active, setActive] = useState<NavKey>('general')
   const [picking, setPicking] = useState(false)
@@ -201,18 +193,6 @@ export default function SettingsModal({
           )}
 
           {active === 'automation' && <RemindersSection />}
-
-          {active === 'skills' && (
-            <SkillsSection
-              sessionId={activeSessionId}
-              suggestions={skillSuggestions}
-              onGenerateSkill={onGenerateSkill}
-            />
-          )}
-
-          {active === 'evolution' && (
-            <EvolutionSection appSettings={appSettings} activeSessionId={activeSessionId} />
-          )}
 
           {active === 'advanced' && (
             <ConsoleSection

@@ -1160,31 +1160,6 @@ select.input {
   align-items: center;
   gap: 8px;
 }
-.chat-header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-.archive-back-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  border: 1px solid var(--dsw-border-l1);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-bg-layer-2);
-  color: var(--dsw-label-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.archive-back-btn:hover {
-  background: var(--dsw-bg-layer-3);
-  color: var(--dsw-label-primary);
-}
 .chat-header-brand {
   display: inline-flex;
   align-items: center;
@@ -2870,61 +2845,6 @@ select.input {
   opacity: 0.8;
 }
 
-/* ---- 技能 ---- */
-.skill-suggest {
-  margin-bottom: 12px;
-  padding: 10px;
-  border: 1px dashed var(--hd-accent-450);
-  border-radius: var(--dsw-radius-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.skill-suggest-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--hd-accent-400);
-}
-.skill-suggest-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-}
-.skill-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.skill-item {
-  padding: 10px 12px;
-  border: 1px solid var(--dsw-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-bg-layer-3);
-}
-.skill-item-main {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.skill-name {
-  font-weight: 600;
-  font-size: 13px;
-}
-.skill-tag {
-  align-self: flex-start;
-  font-size: 11px;
-}
-.skill-desc {
-  font-size: 12px;
-  color: var(--dsw-label-secondary);
-}
-.skill-when {
-  font-size: 11px;
-  color: var(--dsw-label-caption);
-}
-
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar {
   width: 10px;
@@ -2942,79 +2862,6 @@ select.input {
   background: transparent;
 }
 
-/* ---- Agent 进化（023） ---- */
-.evo-stats {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.evo-stat {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 12px;
-  background: var(--dsw-bg-layer-2);
-  border: 1px solid var(--dsw-border-l1);
-  border-radius: var(--dsw-radius-sm);
-}
-.evo-stat-num {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--hd-accent-400);
-}
-.evo-stat-label {
-  font-size: 11px;
-  color: var(--dsw-label-caption);
-}
-.evo-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.evo-event {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-.evo-dot {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-top: 4px;
-  background: var(--dsw-label-dimmed);
-}
-.evo-dot-task {
-  background: var(--hd-accent-400);
-}
-.evo-dot-skill {
-  background: rgb(168, 85, 247);
-}
-.evo-event-main {
-  flex: 1;
-  min-width: 0;
-}
-.evo-event-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.evo-event-type {
-  font-size: 12px;
-  color: var(--dsw-label-primary);
-}
-.evo-event-time {
-  font-size: 11px;
-  color: var(--dsw-label-caption);
-}
-.evo-event-summary {
-  font-size: 12px;
-  color: var(--dsw-label-secondary);
-  word-break: break-word;
-}
 /* ---- 动效偏好：系统要求减少动效时，折叠/搜索面板不做过渡 ---- */
 @media (prefers-reduced-motion: reduce) {
   .sidebar,

@@ -38,12 +38,8 @@ export interface AppSettings {
   reminders?: Reminder[]
   /** 任务记录（app 本地，从会话事件推导）。 */
   tasks?: TaskRecord[]
-  /** 复盘用的隐藏会话（已归档，不出现在会话列表，复盘不污染聊天）。 */
-  reviewSessionId?: string
   /** 已归档会话的本地元数据（sessionId → 标题/cwd/时间），归档时缓存，供归档分组展示与删除定位。 */
   archivedSessionMeta?: Record<string, { title?: string; cwd?: string; archivedAt?: number }>
-  /** 已生成技能的聚类类型（避免重复生成）。 */
-  generatedSkillTypes?: string[]
   /** 外观配置（011）。 */
   appearance?: AppearanceConfig
   /** 侧边栏是否折叠为窄图标栏（app 本地，跨启动保持）。 */

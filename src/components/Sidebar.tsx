@@ -35,7 +35,6 @@ interface Props {
   onSetColor: (id: string, color: string) => void
   onFork: (id: string) => Promise<boolean>
   onArchive: (id: string) => Promise<boolean>
-  onOpenArchive: (id: string, title?: string) => void
   onDelete: (id: string, cwd?: string) => Promise<boolean>
   onDeleteArchived: (id: string, cwd?: string) => Promise<boolean>
   onExport: (id: string) => void
@@ -81,7 +80,6 @@ export default function Sidebar({
   onSetColor,
   onFork,
   onArchive,
-  onOpenArchive,
   onDelete,
   onDeleteArchived,
   onExport,
@@ -257,7 +255,6 @@ export default function Sidebar({
                   <div
                     key={s.sessionId}
                     className={`session-row ${isActive ? 'active' : ''}`}
-                    onClick={() => onOpenArchive(s.sessionId, s.title || undefined)}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       setMenu({ sessionId: s.sessionId, x: e.clientX, y: e.clientY, archived: true })

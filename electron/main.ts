@@ -1,7 +1,7 @@
 /**
  * electron/main.ts —— 应用入口。
  */
-import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, ipcMain, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DshManager } from './dsh-manager.js'
@@ -323,16 +323,6 @@ app.whenReady().then(async () => {
   })
   updateLifecycle.start()
   disposeIpc = registerIpc(manager, settings, () => mainWindow, creds)
-
-  // 归档会话只读视图：在主窗口内导航到归档视图（不再开独立子窗口）。
-  // 由官方 UI 注入的归档面板点击触发。
-  ipcMain.handle('desktop:openArchiveViewer', (_e, sessionId: string, title?: string) => {
-    windowGen?.loadArchiveView(String(sessionId ?? ''), typeof title === 'string' ? title : undefined)
-  })
-  // 从归档视图返回官方引擎 UI（归档视图头部的"返回"按钮触发）
-  ipcMain.handle('desktop:returnToEngine', () => {
-    windowGen?.returnToEngine()
-  })
 
   createWindow()
   createTray()
