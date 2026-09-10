@@ -10,7 +10,7 @@
  *
  * main.ts 只负责创建实例、把托盘菜单 click 指向 checkNow/applyDownloadedUpdate。
  */
-import { app, BrowserWindow, Notification, ipcMain, dialog, clipboard, shell } from 'electron'
+import { app, BrowserWindow, Notification, dialog, clipboard, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -74,7 +74,7 @@ export class UpdateLifecycle {
     return this.updateReadyVersion
   }
 
-  /** updater 是否活跃（IPC 据此返回 disabled 状态）。 */
+  /** updater 是否活跃（托盘/菜单据此判断检查是否可用）。 */
   get isActive(): boolean {
     return this.active
   }
@@ -91,7 +91,6 @@ export class UpdateLifecycle {
       this.logger.warn(`[updater] ${reason}（静默跳过）`)
     }
 
-    this.registerIpc()
     if (!this.active) return
 
     this.registerEvents()
@@ -101,7 +100,7 @@ export class UpdateLifecycle {
     this.intervalTimer = setInterval(() => this.checkUpdates(false), CHECK_INTERVAL)
   }
 
-  /** 手动触发检查（托盘菜单 / IPC 共用）。 */
+  /** 手动触发检查（托盘 / 菜单点击）。 */
   checkNow(): void {
     if (!this.active) {
       const msg = app.isPackaged ? '当前为未签名构建，自动更新不可用' : '开发模式下无法检查更新'
@@ -174,25 +173,6 @@ export class UpdateLifecycle {
     }
     this.checkTask.then(reset, reset)
     return this.checkTask
-  }
-
-  private registerIpc(): void {
-    ipcMain.handle('update:check', () => {
-      try {
-        this.checkNow()
-        return { ok: true, value: { active: this.active } }
-      } catch (err) {
-        this.clearManualTimer()
-        return { ok: false, error: { code: 'update-error', message: (err as Error).message } }
-      }
-    })
-    ipcMain.handle('update:quitAndInstall', () => {
-      if (!this.active) {
-        return { ok: false, error: { code: 'update-disabled', message: '自动更新不可用' } }
-      }
-      this.applyDownloadedUpdate()
-      return { ok: true }
-    })
   }
 
   private registerEvents(): void {

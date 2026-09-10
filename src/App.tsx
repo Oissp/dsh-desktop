@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, DshStatus } from '../shared/types'
 import Wizard from './components/Wizard'
-import MainView from './components/MainView'
 import WhaleLogo from './components/WhaleLogo'
-import { emit } from './bus'
 
 const harness = window.harness
 
@@ -18,7 +16,6 @@ function DesktopApp() {
   const [fatal, setFatal] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
   const [restoring, setRestoring] = useState(false)
-  const [sessionListVersion, setSessionListVersion] = useState(0)
 
   useEffect(() => {
     let alive = true
@@ -36,65 +33,24 @@ function DesktopApp() {
       }
     })()
 
-    const offEvent = harness.onSessionEvent((evt) => {
-      emit(evt)
-      if (evt.kind === 'title' || evt.kind === 'running' || evt.kind === 'session-subscribed') {
-        setSessionListVersion((v) => v + 1)
-      }
-    })
     const offStatus = harness.onDshStatus((s) => {
       if (alive) setDshStatus(s)
     })
     return () => {
       alive = false
-      offEvent()
       offStatus()
     }
   }, [])
 
-  const onUpdateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    const res = await harness.updateAppSettings(patch)
+  const onCompleteWizard = useCallback(async (workspaceCwd: string | null) => {
+    const res = await harness.updateAppSettings({ onboarded: true, workspaceCwd: workspaceCwd || null })
     if (res.ok) setAppSettings(res.value!)
-    return res
   }, [])
-
-  const onCompleteWizard = useCallback(
-    async (workspaceCwd: string | null) => {
-      const res = await harness.updateAppSettings({ onboarded: true, workspaceCwd: workspaceCwd || null })
-      if (res.ok) setAppSettings(res.value!)
-    },
-    [],
-  )
 
   const onSkipWizard = useCallback(async () => {
     const res = await harness.updateAppSettings({ onboarded: true })
     if (res.ok) setAppSettings(res.value!)
   }, [])
-
-  // 外观：主题 / 主题色 / 字体 / 密度 通过 html 属性驱动 CSS 变量，即时生效
-  useEffect(() => {
-    const appearance = appSettings?.appearance
-    if (!appearance) return
-    const root = document.documentElement
-    const applyTheme = () => {
-      // system → 用 matchMedia 解析成 light/dark（CSS 只有 [data-theme=light] 与深色 :root）
-      let resolved = appearance.theme
-      if (resolved === 'system') {
-        resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
-      }
-      root.setAttribute('data-theme', resolved)
-    }
-    applyTheme()
-    root.setAttribute('data-accent', appearance.accent)
-    root.setAttribute('data-font-size', appearance.fontSize)
-    root.setAttribute('data-density', appearance.density)
-    // system 模式下跟随系统主题实时切换
-    if (appearance.theme === 'system') {
-      const mq = window.matchMedia('(prefers-color-scheme: light)')
-      mq.addEventListener('change', applyTheme)
-      return () => mq.removeEventListener('change', applyTheme)
-    }
-  }, [appSettings?.appearance])
 
   if (booting) {
     return (
@@ -117,8 +73,6 @@ function DesktopApp() {
   }
 
   // 崩溃恢复态：引擎反复崩溃已触发崩溃环熔断，展示恢复页 + 自助恢复操作。
-  // 借鉴 anywhere-labs/dsh-desktop 的启动恢复助手：提供回滚配置 / 打开配置目录 /
-  // 重启内核三条出路，而非仅一个重启按钮——坏配置导致的崩溃只重启会原地复现。
   if (dshStatus?.recovery) {
     const busy = restarting || restoring
     return (
@@ -186,13 +140,13 @@ function DesktopApp() {
     )
   }
 
+  // 已就绪：主进程随即把窗口切到官方引擎 UI，这里仅作过渡占位
   return (
-    <MainView
-      appSettings={appSettings}
-      dshStatus={dshStatus}
-      onUpdateSettings={onUpdateSettings}
-      sessionListVersion={sessionListVersion}
-      onSessionListTick={() => setSessionListVersion((v) => v + 1)}
-    />
+    <div className="ready-screen">
+      <WhaleLogo className="boot-logo" />
+      <div className="boot-text">
+        {dshStatus?.ready ? '引擎已就绪，正在打开工作区…' : '引擎启动中…'}
+      </div>
+    </div>
   )
 }

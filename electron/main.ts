@@ -40,14 +40,6 @@ let trayHintShown = false
 // 注意：macOS 自动更新依赖代码签名（017）；未签名时自动更新被禁用，静默跳过。
 autoUpdater.autoDownload = true
 autoUpdater.autoInstallOnAppQuit = true
-// electron-updater 按 semver 预发布标识符划分更新通道：0.1.1-rc.2 属 "rc" 通道，
-// 1.0.0 属稳定通道。本仓库自 1.0.0 起用应用自身版本号（与 dsh 引擎版本解耦），
-// 但仍有 0.1.x 预发布版用户需要跨通道升级到稳定版。固定 allowPrerelease=true 并把
-// 检查通道设为 "alpha"（落入 alpha/beta 特殊集合 → shouldFetchVersion=true），可使
-// 预发布版用户匹配到稳定版 release（hrefChannel=null 也命中）；稳定版用户同样能
-// 发现新稳定版。待所有用户迁移到 1.0.0+ 后可移除这两行，回归默认的 /releases/latest 路径。
-autoUpdater.allowPrerelease = true
-autoUpdater.channel = 'alpha'
 
 // 更新生命周期实例（app.whenReady 中创建）。单飞检查、安装前 recheck、
 // 按版本去重后台提示，见 electron/update-lifecycle.ts。
@@ -74,14 +66,6 @@ function buildTrayMenu(): Menu {
   const readyVersion = updateLifecycle?.readyVersion ?? null
   return Menu.buildFromTemplate([
     { label: '显示主窗口', click: showWindow },
-    {
-      label: '新建会话',
-      click: () => {
-        showWindow()
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win && !win.isDestroyed()) win.webContents.send('menu:new-chat')
-      },
-    },
     readyVersion
       ? { label: `应用更新 v${readyVersion}`, click: applyDownloadedUpdate }
       : { label: '检查更新', click: () => updateLifecycle?.checkNow() },
@@ -290,14 +274,6 @@ app.whenReady().then(async () => {
   // safeStorage 加密凭证层：桌面端自有的敏感值加密存储
   const creds = createCredentialStore(userDataDir())
 
-  // 开机自启（若配置过）——开机自动拉起，保证 dsh 引擎随系统启动。
-  // Electron 44 移除了 setLoginItemSettings 的 openAsHidden（仅 macOS ≤12 有效，
-  // 44 起不再支持 macOS 12）；"启动最小化"由下方 whenReady 的应用内逻辑实现。
-  const appearance = settings.get().appearance
-  if (appearance?.autoLaunch) {
-    app.setLoginItemSettings({ openAtLogin: true })
-  }
-
   setupMenu()
   // Wayland 下 Electron 会自行推断 XDG app id，推断值通常与安装的 .desktop 文件名
   // 不一致，导致 dock/任务栏图标对不上（PR #304 实践）。.desktop 文件名由
@@ -326,19 +302,6 @@ app.whenReady().then(async () => {
 
   createWindow()
   createTray()
-
-  // 启动时最小化到托盘：不展示主窗口，仅后台运行（托盘提供恢复入口）
-  if (appearance?.launchMinimized) {
-    mainWindow?.hide()
-    if (!trayHintShown) {
-      trayHintShown = true
-      try {
-        new Notification({ title: 'DSH Desktop', body: '应用已在后台运行，点托盘鲸鱼图标打开。' }).show()
-      } catch {
-        // 通知失败不阻塞
-      }
-    }
-  }
 
   // 后台启动 dsh，就绪后加载官方 UI（引擎端口），失败不阻塞（保留回退屏）
   void manager.start().then((s) => {

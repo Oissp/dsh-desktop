@@ -132,9 +132,8 @@ describe('IPC 契约防漂移（三层 lockstep 机器强制）', () => {
   })
 
   it('ipc.ts 注册的每个 channel 都有 preload 调用者（或属于已知内部通道）', () => {
-    // 已知内部通道：不在 preload 中调用但合法的通道
+    // 已知内部通道：不在 preload 中调用但合法的通道（当前无）
     const internalChannels = new Set<string>()
-    // dsh:subscribe 由 onSessionEvent 内部 ipcRenderer.invoke 调用（已在 preloadChannels 中）
     const orphaned = [...ipcChannels].filter((c) => !preloadChannels.has(c) && !internalChannels.has(c))
     expect(orphaned, `ipc.ts 注册了无调用者的孤儿 channel: ${orphaned.join(', ')}`).toEqual([])
   })

@@ -12,18 +12,6 @@ import type { AppSettings } from '../shared/types.js'
 const DEFAULTS: AppSettings = {
   onboarded: false,
   workspaceCwd: null,
-  provider: null,
-  model: null,
-  pinnedSessionIds: [],
-  sessionColors: {},
-  appearance: {
-    theme: 'dark',
-    accent: 'deepseek',
-    fontSize: 'medium',
-    density: 'comfortable',
-    autoLaunch: false,
-    launchMinimized: false,
-  },
 }
 
 export class SettingsStore {

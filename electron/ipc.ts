@@ -4,41 +4,15 @@
  * renderer 只认识这里的 channel 与 shared/types.ts 里的类型；
  * dsh 上游变更永远到不了这里。
  */
-import { ipcMain, dialog, clipboard, app, shell, type BrowserWindow } from 'electron'
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { ipcMain, dialog, app, shell, Notification, type BrowserWindow } from 'electron'
+import { existsSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
 import type { SettingsStore } from './settings-store.js'
-import { ReminderManager } from './reminder-manager.js'
 import type { SafeCredentialStore } from './credential-store.js'
 import { fetchWithTimeout, isAbortError } from '../shared/fetch-timeout.js'
-import type {
-  IpcResult,
-  SessionStreamEvent,
-  DshStatus,
-  AppSettings,
-  CustomProviderConfig,
-  PickedFile,
-  Reminder,
-  WebSearchConfig,
-} from '../shared/types.js'
-
-/** 把归一化会话事件渲染成 Markdown（A6 会话导出）。 */
-function renderMarkdown(events: SessionStreamEvent[]): string {
-  const lines: string[] = ['# 会话导出', '', `导出时间：${new Date().toISOString()}`, '', '---', '']
-  for (const evt of events) {
-    if (evt.kind === 'user-message') {
-      const text = evt.message.blocks.filter((b) => b.type === 'text').map((b) => (b.type === 'text' ? b.text : '')).join('\n')
-      lines.push('## 用户', '', text, '')
-    } else if (evt.kind === 'assistant-end') {
-      const text = evt.message.blocks.filter((b) => b.type === 'text').map((b) => (b.type === 'text' ? b.text : '')).join('\n')
-      lines.push('## 助手', '', text, '')
-    } else if (evt.kind === 'tool-call') {
-      lines.push(`> 工具调用：${evt.name}`)
-    }
-  }
-  return lines.join('\n')
-}
+import type { AppSettings, DshStatus, IpcResult } from '../shared/types.js'
+import { foldTitleSnapshot } from './title-snapshot.js'
 
 /** 与 dsh 相同的会话日志路径编码（用于硬删定位，见 dsh-session-persistence-jsonl）。 */
 function encodeSegment(raw: string): string {
@@ -106,16 +80,7 @@ export function registerIpc(
     run(() => Promise.resolve(settings.update(patch))),
   )
 
-  // ---- 011 启动行为（开机自启 / 启动最小化） ----
-  ipcMain.handle('app:setAutoLaunch', (_e, enabled: boolean) =>
-    run(async () => {
-      app.setLoginItemSettings({
-        openAtLogin: Boolean(enabled),
-      })
-    }),
-  )
-
-  // ---- 026 __desktop__ 桥（官方 UI 页面用） ----
+  // ---- __desktop__ 桥（官方 UI 页面用） ----
   ipcMain.handle('desktop:getPort', () =>
     run(() => Promise.resolve(manager.adapterInstance?.client.port ?? null)),
   )
@@ -124,7 +89,6 @@ export function registerIpc(
   )
   ipcMain.handle('desktop:notify', (_e, title: string, body: string) =>
     run(async () => {
-      const { Notification } = await import('electron')
       try {
         new Notification({ title: String(title ?? ''), body: String(body ?? '') }).show()
       } catch {
@@ -136,7 +100,6 @@ export function registerIpc(
   // ---- dsh 生命周期 ----
   ipcMain.handle('dsh:status', () => run(() => Promise.resolve(manager.status())))
   ipcMain.handle('dsh:ensure', () => run(() => manager.start()))
-  ipcMain.handle('dsh:shutdown', () => run(() => manager.stop()))
   // 手动重启内核（恢复页按钮；清除崩溃环后重新 boot）
   ipcMain.handle('dsh:restart', () => run(() => manager.restart()))
   ipcMain.handle('dsh:restoreCheckpoint', () => run(() => manager.restoreCheckpointAndRestart()))
@@ -146,49 +109,32 @@ export function registerIpc(
       await shell.openPath(join(manager.home, 'profiles', 'web'))
     }),
   )
-  ipcMain.handle('dsh:describe', () =>
-    run(async () => {
-      const a = adapter()
-      const d = await a.describe()
-      const status: DshStatus = { ...manager.status(), version: d.version, cwd: d.cwd }
-      return status
-    }),
-  )
 
-  // ---- 会话 ----
-  ipcMain.handle('session:list', () => run(() => adapter().listSessions()))
+  // ---- 会话（向导创建 / 归档桥只读与删除） ----
   ipcMain.handle('session:create', (_e, cwd?: string, agentPreset?: string) =>
     run(() => adapter().createSession(cwd, agentPreset)),
   )
-  ipcMain.handle('session:history', (_e, sessionId: string) => run(() => adapter().getHistory(sessionId)))
-  ipcMain.handle('session:send', (_e, sessionId: string, text: string, files?: PickedFile[]) =>
-    run(() => adapter().sendMessage(sessionId, text, files)),
-  )
-  ipcMain.handle('session:cancel', (_e, sessionId: string) => run(() => adapter().cancelTurn(sessionId)))
-  ipcMain.handle('session:rename', (_e, sessionId: string, title: string) =>
-    run(() => adapter().renameSession(sessionId, title)),
-  )
-  ipcMain.handle('session:fork', (_e, sessionId: string) => run(() => adapter().forkSession(sessionId)))
-  ipcMain.handle('session:archive', (_e, sessionId: string) => run(() => adapter().archiveSession(sessionId)))
   ipcMain.handle('session:listArchived', () =>
     run(async () => {
       const list = await adapter().listArchivedSessions()
-      // 合并本地归档元数据（标题/归档时间）：adapter 只返回引擎的归档 ID 列表，
+      // 合并本地元数据（标题/归档时间）：adapter 只返回引擎的归档 ID 列表，
       // 标题等桌面端缓存的额外信息需从 app-settings.json 读取后合并。
+      // 标题优先取活跃会话标题快照（方案 A：归档后 dsh 无处可查，归档前快照兜底）。
       const state = settings.get()
       const meta = state.archivedSessionMeta ?? {}
+      const snapshot = state.sessionTitleSnapshot ?? {}
       return list.map((item) => {
         const cached = meta[item.sessionId]
         return {
           ...item,
-          title: cached?.title,
+          title: snapshot[item.sessionId]?.title ?? cached?.title,
           archivedAt: cached?.archivedAt,
         }
       })
     }),
   )
+  ipcMain.handle('session:history', (_e, sessionId: string) => run(() => adapter().getHistory(sessionId)))
 
-  // 硬删除：取消(若运行) → 校验日志文件存在 → 删除会话目录
   // 硬删除：先归档（dsh 原生：立即从活跃列表移除，session.list 不再返回），
   // 再取消运行中的 turn，最后尽力删除会话日志文件（数据清除）。
   // 之所以要先归档：dsh 的 session 存储持有内存注册表，仅外部删文件后
@@ -216,155 +162,16 @@ export function registerIpc(
     }),
   )
 
-  // 复制文本到剪贴板
-  ipcMain.handle('clipboard:copy', (_e, text: string) =>
-    run(async () => {
-      clipboard.writeText(String(text ?? ''))
-    }),
-  )
-
-  // ---- Agent 预设（模式） ----
-  ipcMain.handle('preset:list', () => run(() => adapter().listAgentPresets()))
-  ipcMain.handle('preset:select', (_e, sessionId: string, agentPreset: string) =>
-    run(() => adapter().selectAgentPreset(sessionId, agentPreset)),
-  )
-
-  // ---- 附加文件（本机文件选择器） ----
-  const IMAGE_EXT: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.webp': 'image/webp',
-    '.gif': 'image/gif',
-  }
-  // ---- 012 附件限制：单文件 50MB / 最多 10 个（主进程兜底，防绕过前端） ----
-  const MAX_FILE_BYTES = 50 * 1024 * 1024
-  const MAX_FILES = 10
-  ipcMain.handle('files:pick', () =>
-    run(async () => {
-      const win = getWindow()
-      if (!win) return [] as PickedFile[]
-      const result = await dialog.showOpenDialog(win, {
-        title: '添加文件',
-        properties: ['openFile', 'multiSelections'],
-      })
-      if (result.canceled) return [] as PickedFile[]
-      if (result.filePaths.length > MAX_FILES) {
-        throw new Error(`附件最多 ${MAX_FILES} 个`)
-      }
-      const files: PickedFile[] = []
-      for (const path of result.filePaths) {
-        const stat = statSync(path)
-        if (stat.size > MAX_FILE_BYTES) {
-          throw new Error(`文件「${basename(path)}」过大，最大 50MB`)
-        }
-        const mediaType = IMAGE_EXT[extname(path).toLowerCase()]
-        if (mediaType) {
-          const buf = readFileSync(path)
-          files.push({ path, name: basename(path), mediaType, size: stat.size, data: buf.toString('base64') })
-        } else {
-          files.push({ path, name: basename(path), size: stat.size })
-        }
-      }
-      return files
-    }),
-  )
-
-  // ---- 模型 ----
+  // ---- 模型目录（向导展示默认模型） ----
   ipcMain.handle('model:list', () => run(() => adapter().listModels()))
-  ipcMain.handle('model:providers', () => run(() => adapter().listProviders()))
-  ipcMain.handle('model:select', (_e, sessionId: string, provider: string, model: string) =>
-    run(() => adapter().selectModel(sessionId, provider, model)),
-  )
 
-  // ---- 自定义 provider ----
-  ipcMain.handle('provider:list', () => run(() => adapter().listCustomProviders()))
-  ipcMain.handle('provider:save', (_e, config: CustomProviderConfig) =>
-    run(() => adapter().saveCustomProvider(config)),
-  )
-  ipcMain.handle('provider:remove', (_e, id: string) =>
-    run(() => adapter().removeCustomProvider(id)),
-  )
-  ipcMain.handle('provider:setKey', (_e, apiKeyEnv: string, key: string) =>
-    run(async () => {
-      await adapter().setProviderApiKey(apiKeyEnv, key)
-      creds.set(apiKeyEnv, key)
-    }),
-  )
-
-  // ---- Part A：凭证统一管理 ----
-  ipcMain.handle('cred:list', () => run(() => adapter().listCredentials()))
-  ipcMain.handle('cred:setRef', (_e, ref: string, value: string) =>
-    run(async () => {
-      await adapter().setCredential(ref, value)
-      creds.set(ref, value)
-    }),
-  )
-  ipcMain.handle('cred:clear', (_e, ref: string) =>
-    run(async () => {
-      await adapter().clearCredential(ref)
-      creds.unset(ref)
-    }),
-  )
-
-  // ---- Part A：定时提醒（桌面端） ----
-  const reminders = new ReminderManager(
-    () => settings.get(),
-    (next) => settings.update({ reminders: next }),
-    () => manager.adapterInstance,
-    (r, sessionId) => {
-      getWindow()?.webContents.send('reminder:fired', { sessionId, text: r.text })
-    },
-  )
-  reminders.start()
-  ipcMain.handle('reminder:list', () => run(async () => reminders.list()))
-  ipcMain.handle('reminder:create', (_e, input: Omit<Reminder, 'id' | 'nextAt'>) =>
-    run(async () => reminders.create(input)),
-  )
-  ipcMain.handle('reminder:delete', (_e, id: string) => run(async () => reminders.delete(id)))
-
-  // ---- Part A：计划模式 / Web 搜索 ----
-  ipcMain.handle('plan:toggle', (_e, sessionId: string) => run(() => adapter().togglePlanMode(sessionId)))
-  ipcMain.handle('websearch:get', () => run(() => adapter().getWebSearchConfig()))
-  ipcMain.handle('websearch:set', (_e, config: Partial<WebSearchConfig>) =>
-    run(() => adapter().setWebSearchConfig(config)),
-  )
-  ipcMain.handle('skill:list', (_e, sessionId: string) => run(() => adapter().listSkills(sessionId)))
-
-  // ---- Part A：会话导出（JSON / Markdown；历史经 adapter 归一化） ----
-  ipcMain.handle('session:export', (_e, sessionId: string, format: 'zip' | 'json' | 'markdown' = 'json') =>
-    run(async () => {
-      const win = getWindow()
-      if (!win) return { saved: false }
-      let content: string
-      let ext = 'json'
-      const history = await adapter().getHistory(sessionId)
-      if (format === 'json' || format === 'zip') {
-        // 旧 session.export 端点已随 alpha.2 移除；zip 回落为 JSON 内容
-        content = JSON.stringify({ sessionId, exportedAt: new Date().toISOString(), events: history.events }, null, 2)
-        ext = 'json'
-      } else {
-        content = renderMarkdown(history.events)
-        ext = 'md'
-      }
-      const save = await dialog.showSaveDialog(win, {
-        title: '导出会话',
-        defaultPath: `session-${sessionId.slice(-8)}.${ext}`,
-      })
-      if (save.canceled || !save.filePath) return { saved: false }
-      writeFileSync(save.filePath, content, 'utf8')
-      return { saved: true, path: save.filePath }
-    }),
-  )
-
-  // ---- 凭据 / 目录 ----
+  // ---- 凭据（向导首启配置 API Key） ----
   ipcMain.handle('cred:setKey', (_e, key: string) =>
     run(async () => {
       await adapter().setApiKey(key)
       creds.set('DEEPSEEK_API_KEY', key)
     }),
   )
-  ipcMain.handle('cred:hasKey', () => run(() => adapter().hasApiKey()))
   // 测试 DeepSeek API Key：主进程用 key 调 models 端点验证（key 不入 renderer 往返，不落日志）
   ipcMain.handle('cred:testKey', (_e, key: string) =>
     run(async () => {
@@ -412,24 +219,43 @@ export function registerIpc(
     }),
   )
 
-  // ---- 事件推送（主进程 → renderer） ----
-  const onEvent = (evt: SessionStreamEvent) => {
-    getWindow()?.webContents.send('dsh:event', evt)
+  // ---- 会话标题快照（归档列表标题兜底，P2 方案 A） ----
+  // dsh 归档 baseline 只给 sessionId + cwd，标题归档后无处可查；这里周期性
+  // 快照活跃会话标题，归档后列表仍能显示标题（TTL 内保留已归档条目）。
+  const TITLE_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+  const TITLE_SNAPSHOT_INTERVAL_MS = 60 * 1000
+  let engineReadySeen = false
+
+  const takeTitleSnapshot = async () => {
+    const a = manager.adapterInstance
+    if (!a) return
+    try {
+      const sessions = await a.listSessions()
+      const prev = settings.get().sessionTitleSnapshot
+      const next = foldTitleSnapshot(prev, sessions, Date.now(), TITLE_SNAPSHOT_TTL_MS)
+      settings.update({ sessionTitleSnapshot: next })
+    } catch {
+      // 引擎瞬时不可用：跳过本次快照，下轮再试
+    }
   }
+  const titleSnapshotTimer = setInterval(() => void takeTitleSnapshot(), TITLE_SNAPSHOT_INTERVAL_MS)
+  void takeTitleSnapshot()
+
+  // ---- 状态推送（主进程 → renderer） ----
   const onStatus = (s: DshStatus) => {
+    // 引擎就绪转换时立即快照一次，覆盖"启动即归档"的首个会话
+    if (s.ready && !engineReadySeen) {
+      engineReadySeen = true
+      void takeTitleSnapshot()
+    }
     getWindow()?.webContents.send('dsh:status', s)
   }
   const unsubStatus = manager.onStatus(onStatus)
-  // subscribeEvents 按 cb 身份幂等：renderer StrictMode 双挂载 / 重载不会叠加订阅。
-  // 仍保留 unsub 以便窗口卸载时彻底清理主进程侧监听。
-  const unsubEvents = manager.subscribeEvents(onEvent)
-  ipcMain.handle('dsh:subscribe', () => ok(true))
 
   // 预加载时调用，确保退出时清理
   return () => {
     manager.adapterInstance?.close()
-    unsubEvents()
+    clearInterval(titleSnapshotTimer)
     unsubStatus()
-    reminders.stop()
   }
 }

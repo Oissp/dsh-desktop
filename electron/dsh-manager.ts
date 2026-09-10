@@ -15,7 +15,6 @@ import { DshAdapter } from '../adapter/index.js'
 import { checkProfile } from './profile-setup.js'
 import { CrashLoopDetector } from './crash-loop-detector.js'
 import { takeBootSnapshot, promoteToLastGood, restoreFromLastGood } from './guard-snapshot.js'
-import type { SessionStreamEvent } from '../shared/types.js'
 
 const READY_TIMEOUT_MS = 90_000
 const KILL_TIMEOUT_MS = 5_000
@@ -107,10 +106,6 @@ export class DshManager {
   /** 崩溃环检测器。 */
   private crashDetector = new CrashLoopDetector()
   private statusListeners: ((s: DshManagerStatus) => void)[] = []
-  /** 事件订阅者（renderer 通过 dsh:subscribe 注册）。adapter 未就绪时排队，创建/重建后自动接入。 */
-  private eventListeners: ((evt: SessionStreamEvent) => void)[] = []
-  /** 当前 adapter 上的订阅解除函数（重建 adapter 时先解除旧的）。 */
-  private eventUnsubs: (() => void)[] = []
 
   constructor() {
     this.dshHome = join(app.getPath('userData'), 'dsh-home')
@@ -127,48 +122,6 @@ export class DshManager {
   /** 启动令牌（加载官方 UI 与换 Cookie 用）。 */
   get token(): string | null {
     return this.launchToken
-  }
-
-  /**
-   * 可靠事件订阅：adapter 就绪则立即接入；未就绪则排队，adapter 创建/重建后自动接入。
-   * @returns 解除订阅函数。
-   */
-  subscribeEvents(cb: (evt: SessionStreamEvent) => void): () => void {
-    // 按 cb 身份幂等：同一回调重复订阅不叠加。
-    // 修复 StrictMode 双挂载 / renderer 重载导致的累积订阅（事件双发、流式 delta 重复）。
-    if (this.eventListeners.includes(cb)) {
-      return () => {
-        this.eventListeners = this.eventListeners.filter((l) => l !== cb)
-      }
-    }
-    this.eventListeners.push(cb)
-    if (this.adapter) {
-      this.eventUnsubs.push(this.adapter.onSessionEvent(cb))
-    }
-    return () => {
-      this.eventListeners = this.eventListeners.filter((l) => l !== cb)
-    }
-  }
-
-  /** adapter 创建/重建后调用：为所有订阅者重新接入事件流（补订阅 + 防端口漂移）。 */
-  private rebindEventListeners() {
-    const adapter = this.adapter
-    if (!adapter) return
-    for (const unsub of this.eventUnsubs) {
-      try {
-        unsub()
-      } catch {
-        // 忽略旧订阅解除失败
-      }
-    }
-    this.eventUnsubs = []
-    for (const cb of [...this.eventListeners]) {
-      try {
-        this.eventUnsubs.push(adapter.onSessionEvent(cb))
-      } catch (err) {
-        console.error('[dsh-desktop] 事件订阅接入失败:', err)
-      }
-    }
   }
 
   onStatus(cb: (s: DshManagerStatus) => void): () => void {
@@ -325,15 +278,6 @@ export class DshManager {
       this.adapter?.close()
       this.adapter = null
       this.proc = null
-      // 解除旧 adapter 上的订阅（eventListeners 保留，重建 adapter 后重新接入）
-      for (const unsub of this.eventUnsubs) {
-        try {
-          unsub()
-        } catch {
-          // 忽略
-        }
-      }
-      this.eventUnsubs = []
       if (!this.stopping) {
         this.lastError = `dsh 进程退出（code=${code ?? ''} signal=${signal ?? ''}）`
         if (wasRunning) {
@@ -377,8 +321,6 @@ export class DshManager {
         // host.describe 在 alpha.2 已移除，版本由宿主从 dsh package.json 注入
         adapter.setVersion(resolveEngineVersion())
         this.adapter = adapter
-        // 事件订阅补接：adapter 刚创建，把排队/已有订阅者接上（修复订阅竞态）
-        this.rebindEventListeners()
         // alpha.2：强制浏览器认证。用启动令牌换取会话 Cookie，
         // 成功前 isReady()（probeReady）恒为 false → waitUntilReady 挂起等待。
         if (this.launchToken) {
@@ -472,7 +414,6 @@ export class DshManager {
         this.adapter?.close()
         this.adapter = null
         this.ready = false
-        this.eventUnsubs = []
         this.stopping = false
         this.emitStatus()
         resolve()

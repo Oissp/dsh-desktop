@@ -399,28 +399,6 @@ export class DshClient {
     return this.request('session/cancel', { request: payload })
   }
 
-  /**
-   * 执行一条斜杠命令（commands/execute）：不经模型、不进对话流，
-   * 引擎侧追加 command/run → command/done 生命周期。
-   * 用于 /plan 等主机命令——避免把命令当用户消息发给模型（污染对话）。
-   * 返回 undefined 表示命令名/语法未命中（未进 handler）。
-   */
-  executeCommand(payload: { sessionId: string; line: string; images?: unknown[] }): Promise<unknown> {
-    return this.request('commands/execute', {
-      agentId: payload.sessionId,
-      line: payload.line,
-      images: payload.images ?? [],
-    })
-  }
-
-  rename(payload: { sessionId: string; title: string }): Promise<{ title: string; seq: number }> {
-    return this.request('session/rename', { request: payload })
-  }
-
-  fork(payload: { sessionId: string; atSeq?: number }): Promise<{ sessionId: string }> {
-    return this.request('session/fork', { request: payload })
-  }
-
   archiveSession(payload: { sessionId: string }): Promise<{ archivedSessionIds: string[] }> {
     return this.request('workspace/archiveSession', { request: payload })
   }
@@ -439,51 +417,8 @@ export class DshClient {
     return this.request('session/modelCatalog', {})
   }
 
-  selectModel(payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string }): Promise<unknown> {
-    return this.request('session/selectModel', { request: payload })
-  }
-
-  credentialsDescribe(payload: { refs: string[] }): Promise<{ credentials: Record<string, { configured: boolean; source?: string; writable?: boolean }> }> {
-    return this.request('credentials/describe', payload)
-  }
-
   credentialsSet(payload: { ref: string; value: string }): Promise<void> {
     return this.request('credentials/set', payload)
-  }
-
-  credentialsUnset(payload: { ref: string }): Promise<void> {
-    return this.request('credentials/unset', payload)
-  }
-
-  settingsDescribe(): Promise<{
-    writable: boolean
-    hasDocument: boolean
-    namespaces: Array<{ ns: string; value: Record<string, unknown>; secrets: unknown[]; applies?: string; revision?: number }>
-  }> {
-    return this.request('settings/describe', {})
-  }
-
-  settingsUpdate(payload: { ns: string; patch: Record<string, unknown>; expectedRevision?: number }): Promise<unknown> {
-    return this.request('settings/update', payload)
-  }
-
-  settingsMutate(payload: { ns: string; ops: unknown[]; expectedRevision?: number }): Promise<unknown> {
-    return this.request('settings/mutate', payload)
-  }
-
-  agentPresetList(): Promise<{ presets: unknown[]; authorable: boolean }> {
-    return this.request('agentPresets/list', {})
-  }
-
-  agentPresetSelect(payload: { sessionId: string; agentPreset: string }): Promise<string> {
-    return this.request('agentPresets/select', {
-      agentId: payload.sessionId,
-      agentPreset: payload.agentPreset,
-    })
-  }
-
-  skillsList(payload: { sessionId: string }): Promise<{ skills: unknown[] }> {
-    return this.request('skills/list', { request: payload })
   }
 
   pickDirectory(): Promise<string | null> {

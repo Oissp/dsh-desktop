@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeSessionEvent, normalizeControlFrame, normalizeFollowFrame } from '../events'
+import { normalizeSessionEvent, normalizeFollowFrame } from '../events'
 import type { DshEvent } from '../events'
 
 const base = { sessionId: 's1', seq: 1, time: 0 }
@@ -57,40 +57,31 @@ describe('adapter/events normalizeSessionEvent', () => {
     expect(out[0]).toMatchObject({ kind: 'assistant-start', turn: 1, step: 1 })
   })
 
-  it('step/end → step-end', () => {
+  it('step/end → 不产生事件（明细帧，桌面端不消费）', () => {
     const raw = { ...base, type: 'step/end', data: { turn: 1, step: 1 } } as unknown as DshEvent
-    const out = normalizeSessionEvent('s1', raw)
-    expect(out[0]).toMatchObject({ kind: 'step-end', turn: 1, step: 1 })
+    expect(normalizeSessionEvent('s1', raw)).toHaveLength(0)
   })
 
-  it('turn/end completed → turn-end completed', () => {
+  it('turn/end → 仅推送 running:false（思考/转圈结束）', () => {
     const raw = {
       ...base,
       type: 'turn/end',
       data: { turn: 1, reason: { kind: 'completed' }, usage: { inputTokens: 10, outputTokens: 20 } },
     } as unknown as DshEvent
     const out = normalizeSessionEvent('s1', raw)
-    expect(out[0]).toMatchObject({ kind: 'turn-end', reason: 'completed', usage: { inputTokens: 10, outputTokens: 20 } })
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ kind: 'running', running: false })
   })
 
-  it('turn/end error → turn-end error + message', () => {
+  it('turn/end error 同样只推 running:false（错误经 assistant-end 透传）', () => {
     const raw = {
       ...base,
       type: 'turn/end',
       data: { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } },
     } as unknown as DshEvent
     const out = normalizeSessionEvent('s1', raw)
-    expect(out[0]).toMatchObject({ kind: 'turn-end', reason: 'error', error: 'boom' })
-  })
-
-  it('turn/end 同时推送 running:false（思考/转圈结束）', () => {
-    const raw = {
-      ...base,
-      type: 'turn/end',
-      data: { turn: 1, reason: { kind: 'completed' } },
-    } as unknown as DshEvent
-    const out = normalizeSessionEvent('s1', raw)
-    expect(out[1]).toMatchObject({ kind: 'running', running: false })
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ kind: 'running', running: false })
   })
 
   it('user/message 仅 source.kind=user 通过', () => {
@@ -112,54 +103,6 @@ describe('adapter/events normalizeSessionEvent', () => {
     } as unknown as DshEvent
     const out = normalizeSessionEvent('s1', raw)
     expect(out).toHaveLength(0)
-  })
-})
-
-describe('adapter/events normalizeControlFrame', () => {
-  it('baseline 帧 → session-subscribed + title + projection（含 running）', () => {
-    const frame = {
-      type: 'baseline',
-      value: {
-        queues: { s1: [{ placement: 'queued' }] },
-        jobs: {},
-        projections: {
-          s1: {
-            asOfSeq: 5,
-            values: { title: '我的会话', agentPreset: 'desktop' },
-          },
-        },
-      },
-    }
-    const out = normalizeControlFrame(frame as unknown as Record<string, unknown>)
-    expect(out).toContainEqual({ kind: 'session-subscribed', sessionId: 's1', lastSeq: 5 })
-    expect(out).toContainEqual({ kind: 'title', sessionId: 's1', seq: 5, title: '我的会话' })
-    expect(out).toContainEqual({ kind: 'projection', sessionId: 's1', seq: 5, key: 'agentPreset', value: 'desktop' })
-    expect(out).toContainEqual({ kind: 'running', sessionId: 's1', running: true })
-  })
-
-  it('queue 帧有 queued/steering → running:true', () => {
-    const out = normalizeControlFrame({
-      type: 'queue',
-      sessionId: 's1',
-      items: [{ placement: 'steering' }],
-    })
-    expect(out).toContainEqual({ kind: 'running', sessionId: 's1', running: true })
-  })
-
-  it('jobs 帧按状态推 running：有 running/stopping → true，否则 false', () => {
-    const busy = normalizeControlFrame({ type: 'jobs', sessionId: 's1', jobs: [{ status: 'running' }] })
-    expect(busy[0]).toMatchObject({ kind: 'running', running: true })
-    const idle = normalizeControlFrame({ type: 'jobs', sessionId: 's1', jobs: [{ status: 'idle' }] })
-    expect(idle[0]).toMatchObject({ kind: 'running', running: false })
-  })
-
-  it('projection 帧 key=title → title 事件', () => {
-    const out = normalizeControlFrame({ type: 'projection', sessionId: 's1', key: 'title', value: '新标题', seq: 7 })
-    expect(out).toContainEqual({ kind: 'title', sessionId: 's1', seq: 7, title: '新标题' })
-  })
-
-  it('未知帧类型 → 空数组', () => {
-    expect(normalizeControlFrame({ type: 'nope' })).toHaveLength(0)
   })
 })
 

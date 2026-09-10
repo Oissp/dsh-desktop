@@ -2,9 +2,7 @@
  * adapter/events.ts —— 把 dsh 的 SessionEvent / remote.mux 帧归一化为稳定的
  * SessionStreamEvent 词汇。dsh 改事件名/字段时只需改这里。
  *
- * alpha.2 帧来源：
- *  - session/control 流：baseline / queue / jobs / projection 帧（全局会话状态）
- *  - session/follow 流：首帧 snapshot（历史）之后是 event 帧（实时聊天事件）
+ * alpha.2 帧来源：session/follow 流，首帧 snapshot（历史）之后是 event 帧（实时聊天事件）。
  */
 import type { MessageBlock, SessionStreamEvent } from '../shared/types.js'
 
@@ -20,17 +18,6 @@ interface DshChunk {
   type?: string
   text?: string
   reason?: { kind?: string; error?: { message?: string }; failure?: { message?: string } }
-}
-
-function asText(blocks: unknown[] | undefined): string {
-  if (!Array.isArray(blocks)) return ''
-  return blocks
-    .filter((b): b is Record<string, unknown> => typeof b === 'object' && b !== null)
-    .map((b) => {
-      if (b.type === 'text' && typeof b.text === 'string') return b.text
-      return ''
-    })
-    .join('')
 }
 
 function asMessageBlocks(blocks: unknown[] | undefined): MessageBlock[] {
@@ -127,39 +114,8 @@ export function normalizeSessionEvent(
       })
       break
     }
-    case 'step/end': {
-      out.push({
-        kind: 'step-end',
-        sessionId,
-        seq,
-        turn: Number(data.turn ?? 1),
-        step: Number(data.step ?? 1),
-        time: Number(evt.time ?? Date.now()),
-      })
-      break
-    }
     case 'turn/end': {
-      const reasonRaw = (data.reason ?? {}) as { kind?: string; error?: { message?: string } }
-      out.push({
-        kind: 'turn-end',
-        sessionId,
-        seq,
-        turn: Number(data.turn ?? 1),
-        time: Number(evt.time ?? Date.now()),
-        reason: reasonRaw.kind === 'completed' ? 'completed' : reasonRaw.kind === 'error' ? 'error' : 'stopped',
-        error: reasonRaw.error?.message,
-        usage: (data.usage as
-          | {
-              inputTokens?: number
-              outputTokens?: number
-              totalTokens?: number
-              cacheReadTokens?: number
-              cacheWriteTokens?: number
-              reasoningTokens?: number
-            }
-          | undefined) ?? undefined,
-      })
-      // 回合结束 → running:false（思考完成/转圈停止的关键）
+      // 回合结束 → running:false（思考完成/转圈停止的关键）；usage 等明细丢弃
       out.push({ kind: 'running', sessionId, running: false })
       break
     }
@@ -230,67 +186,6 @@ export function normalizeSessionEvent(
   return out
 }
 
-/** 归一化一条 session/control 流帧（全局会话状态）→ 稳定事件。 */
-export function normalizeControlFrame(frame: Record<string, unknown>): SessionStreamEvent[] {
-  const out: SessionStreamEvent[] = []
-  switch (frame.type) {
-    case 'baseline': {
-      const value = (frame.value ?? {}) as {
-        queues?: Record<string, Array<{ placement?: string }>>
-        jobs?: Record<string, Array<{ status?: string }>>
-        projections?: Record<string, { asOfSeq?: number; values?: Record<string, unknown> }>
-      }
-      const projections = value.projections ?? {}
-      for (const [agentId, proj] of Object.entries(projections)) {
-        if (!proj) continue
-        const seq = Number(proj.asOfSeq ?? -1)
-        out.push({ kind: 'session-subscribed', sessionId: agentId, lastSeq: seq })
-        const values = proj.values ?? {}
-        if (typeof values.title === 'string' && values.title) {
-          out.push({ kind: 'title', sessionId: agentId, seq, title: values.title })
-        }
-        for (const [key, v] of Object.entries(values)) {
-          out.push({ kind: 'projection', sessionId: agentId, seq, key, value: v })
-        }
-        const busy =
-          (value.queues?.[agentId] ?? []).some((it) => it.placement === 'queued' || it.placement === 'steering') ||
-          (value.jobs?.[agentId] ?? []).some((j) => j.status === 'running' || j.status === 'stopping')
-        if (busy) out.push({ kind: 'running', sessionId: agentId, running: true })
-      }
-      break
-    }
-    case 'queue': {
-      const sessionId = String(frame.sessionId ?? '')
-      const items = (frame.items ?? []) as Array<{ placement?: string }>
-      if (sessionId && items.some((it) => it.placement === 'queued' || it.placement === 'steering')) {
-        out.push({ kind: 'running', sessionId, running: true })
-      }
-      break
-    }
-    case 'jobs': {
-      const sessionId = String(frame.sessionId ?? '')
-      const jobs = (frame.jobs ?? []) as Array<{ status?: string }>
-      if (sessionId) {
-        out.push({ kind: 'running', sessionId, running: jobs.some((j) => j.status === 'running' || j.status === 'stopping') })
-      }
-      break
-    }
-    case 'projection': {
-      const sessionId = String(frame.sessionId ?? '')
-      const key = String(frame.key ?? '')
-      const seq = Number(frame.seq ?? -1)
-      out.push({ kind: 'projection', sessionId, seq, key, value: frame.value })
-      if (key === 'title' && typeof frame.value === 'string') {
-        out.push({ kind: 'title', sessionId, seq, title: frame.value })
-      }
-      break
-    }
-    default:
-      break
-  }
-  return out
-}
-
 /** 归一化一条 session/follow 流帧（实时聊天事件）。snapshot 由 adapter 单独消费（历史）。 */
 export function normalizeFollowFrame(sessionId: string, frame: Record<string, unknown>): SessionStreamEvent[] {
   if (frame.type === 'event') {
@@ -321,5 +216,3 @@ export function normalizeHistory(events: unknown[]): SessionStreamEvent[] {
   }
   return out
 }
-
-export { asText }
