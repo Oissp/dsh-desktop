@@ -257,6 +257,8 @@ export type SessionStreamEvent =
       kind: 'user-message'
       sessionId: string
       seq: number
+      /** 消息时间（事件自带才有；归档只读视图用于显示消息时钟）。 */
+      time?: number
       message: { id: string; blocks: MessageBlock[] }
     }
   | {
@@ -281,6 +283,8 @@ export type SessionStreamEvent =
       seq: number
       turn: number
       step: number
+      /** 消息时间（事件自带才有；归档只读视图用于显示消息时钟）。 */
+      time?: number
       message: { id: string; blocks: MessageBlock[] }
       error?: string
     }

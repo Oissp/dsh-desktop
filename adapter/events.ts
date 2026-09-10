@@ -99,6 +99,9 @@ export function normalizeSessionEvent(
         kind: 'user-message',
         sessionId,
         seq,
+        // 事件自带时间才透传（历史回放/实时一视同仁），没有就不带，
+        // 归档只读视图据此显示消息时钟。
+        time: evt.time === undefined ? undefined : Number(evt.time),
         message: { id, blocks: asMessageBlocks(data.content as unknown[]) },
       })
       break
@@ -171,7 +174,7 @@ export function normalizeSessionEvent(
       } else if (chunk.type === 'finish') {
         const err = chunk.reason?.error?.message ?? chunk.reason?.failure?.message
         if (err) {
-          out.push({ kind: 'assistant-end', sessionId, seq, turn, step, message: { id: `a-${turn}-${step}`, blocks: [] }, error: err })
+          out.push({ kind: 'assistant-end', sessionId, seq, turn, step, time: evt.time === undefined ? undefined : Number(evt.time), message: { id: `a-${turn}-${step}`, blocks: [] }, error: err })
         }
       }
       break
@@ -184,6 +187,7 @@ export function normalizeSessionEvent(
         seq,
         turn: Number(data.turn ?? 1),
         step: Number(data.step ?? 1),
+        time: evt.time === undefined ? undefined : Number(evt.time),
         message: {
           id: typeof msg.id === 'string' ? msg.id : `a-${data.turn}-${data.step}`,
           blocks: asMessageBlocks(msg.content as unknown[]),
