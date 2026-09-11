@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-rc.2
-        version: 0.1.5-rc.2(0cdd36315c7d5b6cb1632753950f92f1)
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1(0cdd36315c7d5b6cb1632753950f92f1)
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9(supports-color@8.1.1)
@@ -2203,8 +2203,8 @@ packages:
       '@deepseek-ai/dsh-storage-domain': ^0.1.5-rc.2
       '@deepseek-ai/dsh-typert-protocol': ^0.1.5-rc.2
 
-  '@deepseek-ai/dsh@0.1.5-rc.2':
-    resolution: {integrity: sha512-8Xc8hCQHcIWRmTCVU/xZdp6/qMsWMeAd2ObChKDEsfhUPJFXx6H0lgeb1DxUMD86HZrrVN+1bCvn1ppjZ/fOxw==}
+  '@deepseek-ai/dsh@0.1.5-rc.1':
+    resolution: {integrity: sha512-rmNmzQCg3oIc1z8xH7izRSOuy1TNzq+/NILyfM+7e8DKOyV+yBtg47WEsqR2SiIe1ATec3L/rUa1YhIcfQ2XEg==}
     hasBin: true
 
   '@deepseek-ai/node-addon-system-darwin-arm64@0.1.2':
@@ -7950,7 +7950,7 @@ snapshots:
       '@deepseek-ai/dsh-typert-protocol': 0.1.5-rc.2(@deepseek-ai/cordis@4.0.2)
       zod: 4.4.3
 
-  '@deepseek-ai/dsh@0.1.5-rc.2(0cdd36315c7d5b6cb1632753950f92f1)':
+  '@deepseek-ai/dsh@0.1.5-rc.1(0cdd36315c7d5b6cb1632753950f92f1)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
       '@deepseek-ai/cordis-plugin-hmr': 1.0.17(@deepseek-ai/cordis-plugin-timer@1.1.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/cordis@4.0.2)
