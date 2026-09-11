@@ -110,12 +110,47 @@ jobs:
         run: |
           LOCKED="${{ steps.locked.outputs.locked }}"
           TARGET="${{ steps.target.outputs.target }}"
-          if [ "$LOCKED" = "$TARGET" ]; then
-            echo "无上游变更（$LOCKED == $TARGET），不升级依赖"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "检测到上游变更：$LOCKED → $TARGET"
+          INPUT="${{ inputs.dsh_version }}"
+          # 手动 dispatch 指定版本 = 显式人工意图，尊重原样（允许升级/回退）；
+          # 定时跟随 npm latest 只接受"严格升级"：目标版本号必须语义化大于当前锁定版本。
+          # 之前用字符串不等判断（[ "$LOCKED" = "$TARGET" ]），latest 标签滞后于已锁定版本时
+          # （如 latest=0.1.5-rc.1、锁定 0.1.5-rc.2）会把"不同"误判为"有变更"，定时同步把
+          # 依赖错误降级回更老版本。现在 target 更老一律跳过，不触发同步。
+          if [ -n "$INPUT" ]; then
+            if [ "$LOCKED" = "$TARGET" ]; then
+              echo "手动指定版本与当前锁定相同（$LOCKED），无需变更"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "手动指定 dsh 版本：$LOCKED → $TARGET"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          elif node -e '
+            const split=(v)=>{const[c,p]=v.split("-");return{c:c.split(".").map(Number),p:p?p.split("."):null}};
+            const cmp=(x,y)=>{
+              for(let i=0;i<3;i++){if(x.c[i]!==y.c[i])return x.c[i]>y.c[i]?1:-1}
+              const a=x.p,b=y.p;
+              if(!a&&!b)return 0;
+              if(!a)return 1;
+              if(!b)return -1;
+              for(let i=0;i<Math.max(a.length,b.length);i++){
+                if(a[i]===undefined)return -1;
+                if(b[i]===undefined)return 1;
+                const na=Number(a[i]),nb=Number(b[i]);
+                const ia=Number.isInteger(na),ib=Number.isInteger(nb);
+                if(ia&&ib){if(na!==nb)return na>nb?1:-1;continue}
+                if(ia)return -1;
+                if(ib)return 1;
+                if(a[i]!==b[i])return a[i]>b[i]?1:-1;
+              }
+              return 0;
+            };
+            process.exit(cmp(split(process.argv[1]),split(process.argv[2]))>0?0:1)
+          ' "$TARGET" "$LOCKED"; then
+            echo "检测到上游新版本（semver 严格大于）：$LOCKED → $TARGET"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "目标版本不更新：locked=$LOCKED, target=$TARGET（相等=无变更；target 更老=npm latest 标签滞后，跳过降级）"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Bump dsh dep + patch-bump app version
