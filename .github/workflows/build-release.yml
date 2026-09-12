@@ -124,33 +124,25 @@ jobs:
               echo "手动指定 dsh 版本：$LOCKED → $TARGET"
               echo "changed=true" >> "$GITHUB_OUTPUT"
             fi
-          elif node -e '
-            const split=(v)=>{const[c,p]=v.split("-");return{c:c.split(".").map(Number),p:p?p.split("."):null}};
-            const cmp=(x,y)=>{
-              for(let i=0;i<3;i++){if(x.c[i]!==y.c[i])return x.c[i]>y.c[i]?1:-1}
-              const a=x.p,b=y.p;
-              if(!a&&!b)return 0;
-              if(!a)return 1;
-              if(!b)return -1;
-              for(let i=0;i<Math.max(a.length,b.length);i++){
-                if(a[i]===undefined)return -1;
-                if(b[i]===undefined)return 1;
-                const na=Number(a[i]),nb=Number(b[i]);
-                const ia=Number.isInteger(na),ib=Number.isInteger(nb);
-                if(ia&&ib){if(na!==nb)return na>nb?1:-1;continue}
-                if(ia)return -1;
-                if(ib)return 1;
-                if(a[i]!==b[i])return a[i]>b[i]?1:-1;
-              }
-              return 0;
-            };
-            process.exit(cmp(split(process.argv[1]),split(process.argv[2]))>0?0:1)
-          ' "$TARGET" "$LOCKED"; then
-            echo "检测到上游新版本（semver 严格大于）：$LOCKED → $TARGET"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "目标版本不更新：locked=$LOCKED, target=$TARGET（相等=无变更；target 更老=npm latest 标签滞后，跳过降级）"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            # semver 比较移到 scripts/compare-dsh-versions.mjs（可单测）：
+            #   0 = target 严格大于 locked（同步）；2 = 不大于（跳过）；其他 = 出错。
+            # 显式捕获退出码，避免依赖 if/elif 条件退出状态——node 脚本崩溃（如比较器
+            # 语法错误）会走到 else 静默当成"无变更"，比较失败必须报错中止。
+            set +e
+            node scripts/compare-dsh-versions.mjs "$TARGET" "$LOCKED"
+            CMP=$?
+            set -e
+            if [ "$CMP" -eq 0 ]; then
+              echo "检测到上游新版本（semver 严格大于）：$LOCKED → $TARGET"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            elif [ "$CMP" -eq 2 ]; then
+              echo "目标版本不更新：locked=$LOCKED, target=$TARGET（相等=无变更；target 更老=npm latest 标签滞后，跳过降级）"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::dsh 版本比较失败（exit=$CMP）：locked=$LOCKED, target=$TARGET"
+              exit 1
+            fi
           fi
 
       - name: Bump dsh dep + patch-bump app version

@@ -15,6 +15,7 @@ export default defineConfig({
       ...testFiles('adapter'),
       ...testFiles('electron'),
       ...testFiles('plugins/__tests__'),
+      ...testFiles('scripts'),
     ],
     exclude: [
       '.pnpm-store/**',
