@@ -135,6 +135,17 @@ export class DshAdapter {
   }
 
   /**
+   * 取消归档：把 sessionId 从引擎的归档集合里摘掉。
+   *
+   * 上游 0.1.6-alpha.1 起提供。幂等；不校验会话是否存在，所以日志文件已删的
+   * 会话也能清掉。注意引擎仍持有该会话（live）时调用会让它回到活跃列表——
+   * 调用方需自行判断时机（见 electron/ipc.ts 的硬删收尾）。
+   */
+  unarchiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> {
+    return this.client.unarchiveSession({ sessionId })
+  }
+
+  /**
    * 拉取已归档会话：打开 workspace/follow 流，读首帧 baseline 后取消。
    * baseline.archivedSessionIds 即归档集合；各 workspace.sessionIds → path 映射给出 cwd（用于删除定位）。
    */

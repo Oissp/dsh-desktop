@@ -403,6 +403,11 @@ export class DshClient {
     return this.request('workspace/archiveSession', { request: payload })
   }
 
+  /** 取消归档（0.1.6-alpha.1 起提供）：幂等，且不校验会话是否存在。 */
+  unarchiveSession(payload: { sessionId: string }): Promise<{ archivedSessionIds: string[] }> {
+    return this.request('workspace/unarchiveSession', { request: payload })
+  }
+
   /** 打开 workspace/follow 流；首帧为 baseline（含 archivedSessionIds 与各 workspace 的 sessionIds→path）。 */
   workspaceFollow(): RemoteStream {
     return this.openStream('workspace/follow', {})

@@ -31,9 +31,14 @@ export interface AppSettings {
   /** 已归档会话的本地元数据（sessionId → 标题/cwd/时间），归档时缓存，供归档分组展示与删除定位。 */
   archivedSessionMeta?: Record<string, { title?: string; cwd?: string; archivedAt?: number }>
   /**
-   * 已彻底删除的会话 id（墓碑）。dsh 无删除/取消归档 RPC，workspace 归档集合
-   * 只增不减，硬删后 id 仍留在 archivedSessionIds 形成"幽灵行"；这里记录后
-   * listArchived 过滤掉，保证插件面板里删除即消失。
+   * 硬删后待取消归档的会话 id（自清空队列，非永久墓碑）。
+   *
+   * 硬删依赖"归档"把会话从活跃列表隐藏；删掉日志文件后还要调
+   * workspace/unarchiveSession 才能把 id 从引擎归档集合里摘掉（0.1.6-alpha.1
+   * 起提供，此前只能永久留在集合里）。但引擎仍持有该会话（live）时不能摘——
+   * session.list 会合并内存里的会话，摘掉等于让它带着原 workspace 槽位复活到
+   * 活跃列表。这类 id 暂存于此：listArchived 先过滤掉（插件面板里删除即消失），
+   * 快照轮询发现引擎已遗忘后补摘，摘成功即从队列移除并清掉本地痕迹。
    */
   purgedSessionIds?: string[]
 }

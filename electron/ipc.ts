@@ -8,6 +8,7 @@ import { ipcMain, dialog, app, shell, Notification, type BrowserWindow } from 'e
 import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
+import { drainPurged } from './archive-cleanup.js'
 import type { SettingsStore } from './settings-store.js'
 import type { SafeCredentialStore } from './credential-store.js'
 import { fetchWithTimeout, isAbortError } from '../shared/fetch-timeout.js'
@@ -120,7 +121,8 @@ export function registerIpc(
       // 合并本地元数据（标题/归档时间）：adapter 只返回引擎的归档 ID 列表，
       // 标题等桌面端缓存的额外信息需从 app-settings.json 读取后合并。
       // 标题优先取持久 meta（归档时写入，无 TTL），再退回活跃会话标题快照。
-      // 硬删过的 id 在墓碑集合里，过滤掉引擎的幽灵行。
+      // 硬删待取消归档的 id 还在队列里（引擎尚未遗忘），先过滤掉引擎的幽灵行；
+      // 轮询补摘成功后队列自行排空，这里也就不再需要过滤。
       const state = settings.get()
       const meta = state.archivedSessionMeta ?? {}
       const snapshot = state.sessionTitleSnapshot ?? {}
@@ -143,15 +145,19 @@ export function registerIpc(
   // 再取消运行中的 turn，最后尽力删除会话日志文件（数据清除）。
   // 之所以要先归档：dsh 的 session 存储持有内存注册表，仅外部删文件后
   // session.list 仍会返回该会话（看起来像删除无反应）。
+  // 删完文件再取消归档，把 id 从引擎的归档集合里摘掉——集合不再只增不减。
+  // 但引擎仍持有该会话时不能摘：session.list 会合并内存会话，摘掉等于让它
+  // 带着原 workspace 槽位复活到活跃列表。这种情况记入队列由轮询补摘。
   ipcMain.handle('session:hardDelete', (_e, sessionId: string, cwd?: string) =>
     run(async () => {
+      const a = adapter()
       try {
-        await adapter().archiveSession(sessionId)
+        await a.archiveSession(sessionId)
       } catch {
         // 归档失败不阻塞删除（尽力而为）
       }
       try {
-        await adapter().cancelTurn(sessionId)
+        await a.cancelTurn(sessionId)
       } catch {
         // 忽略：未运行或已结束
       }
@@ -163,13 +169,22 @@ export function registerIpc(
       } catch {
         // 文件清理失败不阻塞：会话已归档（从列表消失），数据可能残留但不可见
       }
-      // dsh 无删除/取消归档 RPC，workspace 归档集合只增不减：硬删后 id 仍留在
-      // archivedSessionIds，刷新会重现幽灵行（文件已删、cwd 映射消失后更删不掉）。
-      // 记墓碑，listArchived 过滤掉。
-      const purged = new Set(settings.get().purgedSessionIds ?? [])
-      if (!purged.has(sessionId)) {
-        purged.add(sessionId)
-        settings.update({ purgedSessionIds: [...purged] })
+
+      // 收尾：引擎已不再持有该会话（从未 live，或已重启过）时当场摘掉归档 id；
+      // 仍被持有则入队隐藏，等引擎遗忘后补摘。取列表失败按"仍持有"处理——
+      // 宁可多藏一会儿，也不能让会话复活。
+      let activeIds: Set<string>
+      try {
+        activeIds = new Set((await a.listSessions()).map((s) => s.sessionId))
+      } catch {
+        activeIds = new Set([sessionId])
+      }
+      if ((await drainPurged(a, activeIds, [sessionId])).length === 0) {
+        const purged = new Set(settings.get().purgedSessionIds ?? [])
+        if (!purged.has(sessionId)) {
+          purged.add(sessionId)
+          settings.update({ purgedSessionIds: [...purged] })
+        }
       }
     }),
   )
@@ -263,28 +278,56 @@ export function registerIpc(
       const sessions = await a.listSessions()
       const now = Date.now()
       const state = settings.get()
-      const prevSnapshot = state.sessionTitleSnapshot ?? {}
-      const nextSnapshot = foldTitleSnapshot(prevSnapshot, sessions, now, TITLE_SNAPSHOT_TTL_MS)
-      const patch: Partial<AppSettings> = {}
-
-      // 活跃→消失的会话视为归档：写持久 meta（标题 + 归档时间）。已墓碑的
-      // （硬删）不记，避免污染归档元数据。
       const activeIds = new Set(sessions.map((s) => s.sessionId))
       const purged = new Set(state.purgedSessionIds ?? [])
-      const prevMeta = state.archivedSessionMeta ?? {}
+      let prevSnapshot = state.sessionTitleSnapshot ?? {}
+      let prevMeta = state.archivedSessionMeta ?? {}
+
+      // 硬删收尾：引擎已遗忘（重启后不再 live、且日志文件已删）的会话，用
+      // workspace/unarchiveSession 把 id 从引擎归档集合里真正摘掉，本地快照与
+      // 归档元数据一并清除——硬删不再留永久墓碑，队列最终归零。
+      let drainedAny = false
+      if (purged.size > 0) {
+        const drained = await drainPurged(a, activeIds, [...purged])
+        if (drained.length > 0) {
+          drainedAny = true
+          prevSnapshot = { ...prevSnapshot }
+          prevMeta = { ...prevMeta }
+          for (const id of drained) {
+            purged.delete(id)
+            delete prevSnapshot[id]
+            delete prevMeta[id]
+          }
+        }
+      }
+
+      const nextSnapshot = foldTitleSnapshot(prevSnapshot, sessions, now, TITLE_SNAPSHOT_TTL_MS)
+
+      // 活跃→消失的会话视为归档：写持久 meta（标题 + 归档时间）。待取消归档的
+      // （硬删）不记，避免污染归档元数据。
       const nextMeta = { ...prevMeta }
       for (const [id, v] of Object.entries(prevSnapshot)) {
         if (!activeIds.has(id) && !(id in nextMeta) && !purged.has(id)) {
           nextMeta[id] = { title: v.title, archivedAt: now }
         }
       }
-      if (Object.keys(nextMeta).length !== Object.keys(prevMeta).length) patch.archivedSessionMeta = nextMeta
+      const metaChanged = Object.keys(nextMeta).length !== Object.keys(prevMeta).length
+
+      const patch: Partial<AppSettings> = {}
+      // 排水就地修剪了 prev*，下面的增量比较已看不出差异，所以排水这一批无条件
+      // 落盘——否则磁盘上会残留已删会话的快照与归档元数据。
+      if (drainedAny) {
+        patch.purgedSessionIds = [...purged]
+        patch.archivedSessionMeta = nextMeta
+      } else if (metaChanged) {
+        patch.archivedSessionMeta = nextMeta
+      }
 
       // 快照落盘：内容变化或本批有 meta 写入时立即写；仅 at 刷新每 5 分钟
       // 兜底一次（活跃会话 at 要新鲜，保证归档时 TTL 从归档时刻起算），
       // 避免每 60s 无条件全量写 app-settings.json。
       const changed = titleSnapshotChanged(prevSnapshot, nextSnapshot)
-      if (changed || 'archivedSessionMeta' in patch || now - titleSnapshotLastWrite >= TITLE_SNAPSHOT_HEARTBEAT_MS) {
+      if (changed || drainedAny || metaChanged || now - titleSnapshotLastWrite >= TITLE_SNAPSHOT_HEARTBEAT_MS) {
         patch.sessionTitleSnapshot = nextSnapshot
         titleSnapshotLastWrite = now
       }
