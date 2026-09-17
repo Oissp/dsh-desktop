@@ -34,15 +34,23 @@ const DESKTOP_MANAGED_MARKER = '.dsh-desktop-managed'
 const CORE_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
 
 /**
- * 计算应从 profile 清理的过期 bundle：非核心层、非当前清单、且为裸包名
- * （伴随插件都是裸包名，@scope 的是引擎/核心包）的已登记 bundle。
+ * 计算应从 profile 清理的过期 bundle：当前清单里已不存在、且确为桌面端安装的条目。
+ *
  * 清单移除某插件（如旧版 harness-memory）后，旧安装仍残留在 bundles 与
  * node_modules，dsh 会继续加载并在插件列表显示——这里负责收尾。
+ *
+ * "确为桌面端安装"由安装目录里的 .dsh-desktop-managed 标记判定，不再靠包名
+ * 启发式（"非 @scope 即伴随插件"）。0.1.6-alpha.2 起官方插件管理页
+ * （pluginManager Remote）让用户能自己往 dsh.profile.bundles 里装插件，而它写的
+ * 正是同一个字段：靠包名猜测会把用户自装的裸包名插件一并取消登记，用户看到的
+ * 是"插件重启后自己变成禁用了"。标记文件是桌面端自己的所有权记录，只清理自己装的东西。
  */
-export function diffStaleBundles(registered: string[], managed: string[]): string[] {
-  return registered.filter(
-    (name) => !name.startsWith('@') && !CORE_PROFILE_BUNDLES.includes(name) && !managed.includes(name),
-  )
+export function diffStaleBundles(
+  registered: string[],
+  managed: string[],
+  desktopInstalled: (name: string) => boolean,
+): string[] {
+  return registered.filter((name) => !managed.includes(name) && desktopInstalled(name))
 }
 
 export type ProfileSetupResult =
@@ -58,6 +66,11 @@ export function pluginSourceDir(appPath: string, name: string): string {
 /** profile 中插件应安装的位置。 */
 function pluginTargetDir(dshHome: string, name: string): string {
   return join(dshHome, 'profiles', 'web', 'node_modules', name)
+}
+
+/** 该 bundle 是否为桌面端安装（安装目录带标记，而非用户/插件管理页装的）。 */
+function isDesktopInstalled(dshHome: string, name: string): boolean {
+  return existsSync(join(pluginTargetDir(dshHome, name), DESKTOP_MANAGED_MARKER))
 }
 
 /** 复制单个插件到 profile 并登记 bundle。返回是否成功。 */
@@ -117,18 +130,24 @@ export function checkProfile(dshHome: string, appPath: string): ProfileSetupResu
   })
 
   let anyFail = false
-  // 总是同步本地插件源码到 profile（保证改动即时生效，覆盖旧版本）
+  // 总是同步本地插件源码到 profile（保证改动即时生效，覆盖旧版本），并把伴随
+  // 插件登记回 bundles。**这是有意的强制启用**：0.1.6-alpha.2 的官方插件管理页
+  // 允许用户把 bundle 关掉（setBundleEnabled 从 dsh.profile.bundles 里摘名），
+  // 而它只列出「在 bundles 里 ∪ 在 profile dependencies 里 ∪ 引擎自带」的包。
+  // 伴随插件三者都不属于（源码是桌面端拷进去的），一旦被摘名就彻底从插件页
+  // 消失，用户再也无法把它打开——伴随插件是桌面端自己的功能，宁可让那个开关
+  // "关不干净"（下次启动恢复），也不能制造一个找不回来的死路。
   for (const name of BUNDLE_PLUGINS) {
     if (!installOne(dshHome, appPath, name)) anyFail = true
   }
 
   // 清理清单已移除的旧插件安装（如旧版 harness-memory）：从 bundles 与
   // node_modules 一并移除，否则 dsh 仍会加载并在插件列表显示。幂等，每次启动
-  // 都跑。仅处理裸包名，不动 @scope 的引擎/核心包。
+  // 都跑。只认桌面端自己的安装标记，不碰用户/插件管理页装的 bundle。
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
     const bundles = manifest?.dsh?.profile?.bundles ?? []
-    const stale = diffStaleBundles(bundles, BUNDLE_PLUGINS)
+    const stale = diffStaleBundles(bundles, BUNDLE_PLUGINS, (name) => isDesktopInstalled(dshHome, name))
     if (stale.length > 0) {
       manifest.dsh = {
         ...(manifest.dsh ?? {}),
@@ -136,11 +155,7 @@ export function checkProfile(dshHome: string, appPath: string): ProfileSetupResu
       }
       writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
       for (const name of stale) {
-        const target = pluginTargetDir(dshHome, name)
-        // 只删桌面端安装的（带标记）；用户自装插件仅取消登记、保留源码。
-        if (existsSync(join(target, DESKTOP_MANAGED_MARKER))) {
-          rmSync(target, { recursive: true, force: true })
-        }
+        rmSync(pluginTargetDir(dshHome, name), { recursive: true, force: true })
       }
       console.log(`[dsh-desktop] 清理已移除的插件: ${stale.join(', ')}`)
     }

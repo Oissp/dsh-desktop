@@ -103,3 +103,32 @@ const desktop: DesktopBridge = {
 }
 
 contextBridge.exposeInMainWorld('__desktop__', desktop)
+
+// ---- 主题源转发 ----
+// 官方 UI（0.1.6-alpha.2+）把当前主题源发布在 html[data-ds-theme-source] 上，
+// 供宿主壳把原生窗口装饰对齐到应用主题。桌面壳把它转给主进程的
+// nativeTheme.themeSource，macOS 标题栏/活力效果才会跟随应用主题而不是系统主题。
+// 回退屏不发布该属性（自身硬编码深色），其窗口装饰由主进程在 loadFallback 时置 dark。
+const THEME_SOURCE_ATTRIBUTE = 'data-ds-theme-source'
+const THEME_SOURCES = new Set(['light', 'dark', 'system'])
+
+function forwardThemeSource(): void {
+  const report = (): void => {
+    const value = document.documentElement?.getAttribute(THEME_SOURCE_ATTRIBUTE)
+    // 只放行已知取值：这条消息跨渲染进程边界，主进程不应接受任意字符串
+    if (value !== null && value !== undefined && THEME_SOURCES.has(value)) {
+      ipcRenderer.send('desktop:themeSource', value)
+    }
+  }
+  const observe = (): void => {
+    report()
+    new MutationObserver(report).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: [THEME_SOURCE_ATTRIBUTE],
+    })
+  }
+  if (document.documentElement) observe()
+  else document.addEventListener('DOMContentLoaded', observe, { once: true })
+}
+
+forwardThemeSource()

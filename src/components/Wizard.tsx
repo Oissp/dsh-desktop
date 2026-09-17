@@ -118,7 +118,7 @@ export default function Wizard({ dshReady, onComplete, onSkip }: Props) {
                     只需三步：配置 API Key → 选择工作区 → 开始对话。
                   </p>
                   <div className="hint" style={{ marginTop: 12 }}>
-                    默认模型：{models.find((g) => g.models.length > 0)?.models.map((m) => m.name).join(' · ') ?? 'DeepSeek-V4-Flash'}
+                    默认模型：{models.find((g) => g.models.length > 0)?.models.map((m) => m.name).join(' · ') ?? 'DeepSeek-V41-Flash'}
                   </div>
                 </div>
               )}

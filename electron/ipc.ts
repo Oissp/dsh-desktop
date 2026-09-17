@@ -4,7 +4,7 @@
  * renderer 只认识这里的 channel 与 shared/types.ts 里的类型；
  * dsh 上游变更永远到不了这里。
  */
-import { ipcMain, dialog, app, shell, Notification, type BrowserWindow } from 'electron'
+import { ipcMain, dialog, app, shell, nativeTheme, Notification, type BrowserWindow } from 'electron'
 import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
@@ -82,6 +82,13 @@ export function registerIpc(
   )
 
   // ---- __desktop__ 桥（官方 UI 页面用） ----
+  // 主题源：preload 观察到 html[data-ds-theme-source] 变化时单向推送（无回执）。
+  // 只接受白名单取值——该值决定整个应用的原生窗口装饰，不能让渲染进程写任意串。
+  ipcMain.on('desktop:themeSource', (_e, source: unknown) => {
+    if (source === 'light' || source === 'dark' || source === 'system') {
+      nativeTheme.themeSource = source
+    }
+  })
   ipcMain.handle('desktop:getPort', () =>
     run(() => Promise.resolve(manager.adapterInstance?.client.port ?? null)),
   )

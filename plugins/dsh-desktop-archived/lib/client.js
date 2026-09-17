@@ -67,7 +67,9 @@ window.__ModuleLoader__.load({
 			".dsh-arch-copy{width:calc(28px + var(--dsh-content-font-delta,0px));height:calc(28px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;border-radius:28px;justify-content:center;align-items:center;padding:6px;display:inline-flex}",
 			".dsh-arch-copy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
 			".dsh-arch-copy svg{width:calc(15px + var(--dsh-content-font-delta,0px));height:calc(15px + var(--dsh-content-font-delta,0px))}",
-			// Reasoning disclosure — ui-chat ReasoningRow.
+			// Reasoning disclosure — ui-chat ReasoningRow. The body is MarkdownText
+			// variant="compact" (0.1.6-alpha.2 moved the typography out of the row CSS
+			// and into the compact variant), so this box carries only the indent.
 			".dsh-arch-reason{flex-direction:column;display:flex}",
 			".dsh-arch-reason:not([data-expanded]){contain:size layout;height:calc(24px + var(--dsh-content-font-delta,0px))}",
 			".dsh-arch-reason-row{position:relative;overflow:hidden}",
@@ -77,7 +79,7 @@ window.__ModuleLoader__.load({
 			".dsh-arch-reason-sep{background:var(--dsw-alias-label-caption);border-radius:1px;flex:none;width:2px;height:2px;margin:0 8px}",
 			".dsh-arch-reason-summary{min-width:0;color:var(--dsw-alias-label-tertiary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));white-space:nowrap;flex:auto;overflow:hidden}",
 			".dsh-arch-reason-summary span{text-overflow:ellipsis;display:block;overflow:hidden}",
-			".dsh-arch-reason-body{padding:4px 0 4px calc(22px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));white-space:pre-wrap;word-break:break-word}",
+			".dsh-arch-reason-body{padding:4px 0 4px calc(22px + var(--dsh-content-font-delta,0px));min-width:0}",
 			// Tool command card — ui-chat GenericCommandCard.
 			".dsh-arch-cmd{flex-direction:column;display:flex}",
 			".dsh-arch-cmd-row{position:relative;overflow:hidden}",
@@ -219,7 +221,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/** Collapsible 思考 disclosure, mirroring ui-chat's ReasoningRow. */
-		function ArchReasoning({ text, t }) {
+		function ArchReasoning({ text, labels, t }) {
 			const [expanded, setExpanded] = react.useState(false);
 			const summary = firstLine(text).replaceAll("**", "");
 			return jsxs("div", {
@@ -243,7 +245,12 @@ window.__ModuleLoader__.load({
 							jsx("span", { className: "dsh-arch-reason-sep", "aria-hidden": "true" }),
 							jsx("span", { className: "dsh-arch-reason-summary", children: jsx("span", { children: summary }) })
 						] }),
-						children: jsx("div", { className: "dsh-arch-reason-body", children: text })
+						// Settled transcript: never streaming, so the engine's `running` branch
+						// (latestLine summary, streaming cursor) does not apply here.
+						children: jsx("div", {
+							className: "dsh-arch-reason-body",
+							children: jsx(primitives.MarkdownText, { text, labels, variant: "compact" })
+						})
 					})
 				]
 			});
@@ -294,7 +301,7 @@ window.__ModuleLoader__.load({
 					out.push(jsx(primitives.MarkdownText, { text: b.text, labels: mdLabels }, i));
 				} else if (b.type === "reasoning") {
 					if (!b.text) continue;
-					out.push(jsx(ArchReasoning, { text: b.text, t }, i));
+					out.push(jsx(ArchReasoning, { text: b.text, labels: mdLabels, t }, i));
 				} else if (b.type === "tool-call") {
 					out.push(jsx(ArchCommand, {
 						name: b.name,

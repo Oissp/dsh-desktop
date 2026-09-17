@@ -7,7 +7,7 @@
  *
  * 检查项：
  *  1. HarnessApi 接口声明的每个方法 → preload 的 api 对象都有对应绑定
- *  2. preload 调用的每个 IPC channel → ipc.ts/main.ts 都有 ipcMain.handle 注册
+ *  2. preload 调用的每个 IPC channel → ipc.ts/main.ts 都有 ipcMain.handle/on 注册
  *  3. ipc.ts 注册的每个 channel → preload 中都有调用者（或属于已知内部通道）
  *
  * 历史教训（对齐参考项目）：file_open 曾注册成 open_path 而契约调 file_open——
@@ -71,28 +71,29 @@ function extractPreloadApiMap(): Map<string, string> {
   return map
 }
 
-/** 从 preload.ts 提取所有被调用的 IPC channel（call + ipcRenderer.invoke）。 */
+/** 从 preload.ts 提取所有被调用的 IPC channel（call + ipcRenderer.invoke/send）。 */
 function extractPreloadChannels(): Set<string> {
   const channels = new Set<string>()
   // call('channel') 或 call<number>('channel')
   for (const m of preloadSrc.matchAll(/call(?:<[^>]*>)?\(\s*['"]([\w:-]+)['"]/g)) {
     channels.add(m[1])
   }
-  // ipcRenderer.invoke('channel')
-  for (const m of preloadSrc.matchAll(/ipcRenderer\.invoke\(\s*['"]([\w:-]+)['"]/g)) {
+  // ipcRenderer.invoke('channel') / ipcRenderer.send('channel')（单向推送通道）
+  for (const m of preloadSrc.matchAll(/ipcRenderer\.(?:invoke|send)\(\s*['"]([\w:-]+)['"]/g)) {
     channels.add(m[1])
   }
   return channels
 }
 
-/** 从 electron/ 下所有 .ts 提取 ipcMain.handle 注册的 channel（main + ipc + 拆分模块）。 */
+/** 从 electron/ 下所有 .ts 提取 ipcMain.handle/on 注册的 channel（main + ipc + 拆分模块）。 */
 function extractIpcChannels(): Set<string> {
   const channels = new Set<string>()
   const electronDir = join(ROOT, 'electron')
   const files = readdirSync(electronDir).filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
   for (const f of files) {
     const src = readFileSync(join(electronDir, f), 'utf8')
-    for (const m of src.matchAll(/ipcMain\.handle\(\s*['"]([\w:-]+)['"]/g)) {
+    // handle = 请求/响应；on = 单向推送（如 desktop:themeSource）。两者都属契约面。
+    for (const m of src.matchAll(/ipcMain\.(?:handle|on)\(\s*['"]([\w:-]+)['"]/g)) {
       channels.add(m[1])
     }
   }

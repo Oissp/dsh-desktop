@@ -10,7 +10,7 @@
  * 旧监听器或白名单失效。收进此类后，引擎恢复路径只需调 loadFallback() /
  * loadEngineUI()，状态自洽。
  */
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
 
 export interface WindowGenerationHooks {
@@ -81,6 +81,10 @@ export class MainWindowGeneration {
   loadFallback(): void {
     if (this.released || this.win.isDestroyed()) return
     this.loadedEnginePort = null
+    // 回退屏自身硬编码深色（styles.css 的 color-scheme: dark），且不发布
+    // html[data-ds-theme-source]，原生窗口装饰不会自己跟上——这里显式置 dark。
+    // 引擎 UI 加载后由 preload 转发它发布的主题源覆盖。
+    nativeTheme.themeSource = 'dark'
     const { devServerUrl, appPath } = this.hooks
     if (devServerUrl) {
       void this.win.loadURL(devServerUrl)
