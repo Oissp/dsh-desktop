@@ -16,6 +16,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { NATIVE_MODULE_FAMILIES, familyBinaryPath } from './lib/native-modules.mjs'
+import { nodeBinaryRelPath } from './lib/node-runtime.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'out')
 const BUNDLE_ID = 'com.dsh.desktop'
@@ -110,6 +111,15 @@ if (!existsSync(outDir)) {
       if (arch !== 'arm64') {
         fail(`产物架构 ${arch} 与预期 arm64 不符`)
       }
+    }
+
+    // 捆绑 Node 运行时：dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，产物必须带
+    // 独立 Node 二进制。dsh-manager 在打包环境按 resources/bin/node 解析。
+    const nodeBin = join(bundle, 'Contents', 'Resources', nodeBinaryRelPath('darwin'))
+    if (existsSync(nodeBin)) {
+      ok(`捆绑 Node 运行时: ${nodeBin.slice(bundle.length)}`)
+    } else {
+      fail(`缺捆绑 Node 运行时 ${nodeBin}（after-pack 未写入，引擎将无法启动）`)
     }
 
     const appRes = join(bundle, 'Contents', 'Resources', 'app')

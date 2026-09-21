@@ -15,6 +15,7 @@ import { openSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
+import { nodeBinaryRelPath } from './lib/node-runtime.mjs'
 
 const deb = process.argv[2]
   ?? readdirSync('out').map((f) => `out/${f}`).filter((f) => f.endsWith('.deb')).sort()[0]
@@ -107,6 +108,16 @@ if (has((p) => /^\.\/opt\/[^/]+\/[^/]+$/.test(p))) {
   ok('主可执行文件存在')
 } else {
   fail('未找到主可执行文件')
+}
+
+// 捆绑 Node 运行时：dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，打包产物必须
+// 带独立 Node 二进制供 dsh-manager spawn 引擎。缺失则装上即卡在启动页（1.0.28 回归根因）。
+// 不硬编码 productName：匹配 opt/<name>/resources/bin/node 即可。
+const nodeRel = `resources/${nodeBinaryRelPath('linux')}`
+if (has((p) => p.includes(`/opt/`) && p.includes(nodeRel))) {
+  ok(`捆绑 Node 运行时存在（${nodeRel}）`)
+} else {
+  fail(`缺捆绑 Node 运行时（${nodeRel}）——after-pack 未写入，引擎将无法启动`)
 }
 
 console.log('\n[verify-deb] 平台纯净性（不应有非 linux-x64 的 prebuild）')

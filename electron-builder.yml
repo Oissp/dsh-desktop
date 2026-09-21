@@ -35,7 +35,7 @@ npmRebuild: false
 # 复制完整 node_modules（见 scripts/after-pack.mjs）
 afterPack: scripts/after-pack.mjs
 
-# 原生模块（node-pty / koffi）解包，保证 ELECTRON_RUN_AS_NODE 下可加载
+# 原生模块（node-pty / koffi）解包，保证 dsh 引擎（独立 Node 进程）下可加载
 asarUnpack:
   - node_modules/.pnpm/node-pty*/**/*
   - node_modules/.pnpm/koffi*/**/*

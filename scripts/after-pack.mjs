@@ -16,6 +16,8 @@ import { execFileSync } from 'node:child_process'
 // 原生模块族定义（包名/路径）抽到 lib/native-modules.mjs，供 verify-deb /
 // verify-mac / smoke-test 共用，避免路径硬编码多处不同步。
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
+// 捆绑 Node 运行时（dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，需真 Node 跑引擎）
+import { nodePlatform, nodeArch, placeNodeRuntime } from './lib/node-runtime.mjs'
 
 /** 确保某原生模块族的平台包存在于 src（不存在则从 npm 拉取到 node_modules）。 */
 function ensureFamilyPlatformPackage(family, projectRoot, targetPlatform, targetArch, src) {
@@ -191,4 +193,17 @@ export default async function afterPack(context) {
     }
     console.log(`[afterPack] ✅ ${family.scope}/${pkgName} 原生二进制已在产物: ${destBin.slice(dest.indexOf('node_modules'))}`)
   }
+
+  // 捆绑 Node 运行时：dsh 0.1.6-alpha.2 的 node-addon-require-builtin 在
+  // ELECTRON_RUN_AS_NODE 模式下拿不到 V8 embedder context 直接拒绝启动引擎，
+  // 故打包产物必须带一份独立 Node 二进制，供 dsh-manager spawn 引擎时使用。
+  // 下载带 sha256 校验与本地缓存，重复构建零网络。缺失即发版阻断——没有它
+  // 打包后的引擎必崩（alpha.2 回归的根因）。
+  const rtPlatform = nodePlatform(targetPlatform)
+  const rtArch = nodeArch(context.arch)
+  const rtBin = await placeNodeRuntime(appResources, rtPlatform, rtArch)
+  if (!existsSync(rtBin)) {
+    throw new Error(`[afterPack] 捆绑 Node 运行时写入失败: ${rtBin}`)
+  }
+  console.log(`[afterPack] ✅ 捆绑 Node 运行时已在产物: ${rtBin.slice(appResources.length)}`)
 }

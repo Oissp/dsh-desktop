@@ -256,6 +256,14 @@ jobs:
             ~/.cache/electron-builder
           key: ${{ runner.os }}-eb-${{ hashFiles('electron-builder.yml') }}
 
+      # 捆绑 Node 运行时缓存：after-pack 下载官方 Node 二进制到 ~/.cache/dsh-desktop-node-runtime，
+      # 命中则零网络。dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，产物必须带这份 Node。
+      - name: Cache bundled Node runtime
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/dsh-desktop-node-runtime
+          key: node-rt-${{ runner.os }}-${{ hashFiles('scripts/lib/node-runtime.mjs') }}
+
       - name: Install build prerequisites (Debian 13)
         run: |
           apt-get update -qq

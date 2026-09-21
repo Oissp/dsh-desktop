@@ -11,10 +11,11 @@
  * 用法：node scripts/smoke-test.mjs [out/linux-unpacked]
  * 退出码：0 通过，1 失败。CI 中放在 verify-deb 之后。
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { NATIVE_MODULE_FAMILIES, familyBinaryPath, familyPackageDir } from './lib/native-modules.mjs'
+import { nodeBinaryRelPath } from './lib/node-runtime.mjs'
 
 const unpackedDir = resolve(process.argv[2] ?? 'out/linux-unpacked')
 const executable = join(unpackedDir, 'dsh-desktop')
@@ -64,6 +65,20 @@ for (const family of NATIVE_MODULE_FAMILIES) {
     fail(`${family.name} 平台包无 .node 二进制：${pkgDir}`)
   } else {
     ok(`${family.name} 原生二进制在位（${bin.slice(nmRoot.length)}）`)
+  }
+}
+
+// 捆绑 Node 运行时：dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，dsh-manager 在
+// 打包环境按 resources/bin/node 解析。这里确认它存在且可执行（启动引擎的硬依赖）。
+const bundledNode = join(unpackedDir, 'resources', nodeBinaryRelPath(process.platform))
+if (!existsSync(bundledNode)) {
+  fail(`缺捆绑 Node 运行时: ${bundledNode}（after-pack 未写入，引擎将无法启动）`)
+} else {
+  const ver = spawnSync(bundledNode, ['--version'], { encoding: 'utf8' })
+  if (ver.status === 0 && ver.stdout.trim()) {
+    ok(`捆绑 Node 运行时可执行: ${ver.stdout.trim()}`)
+  } else {
+    fail(`捆绑 Node 运行时无法执行（status=${ver.status}）: ${bundledNode}`)
   }
 }
 

@@ -2,7 +2,9 @@
  * electron/dsh-manager.ts —— dsh 引擎子进程生命周期管理。
  *
  * 职责：
- *  - 定位 dsh 可执行入口（开发环境用系统 node，打包环境用 ELECTRON_RUN_AS_NODE）
+ *  - 定位 dsh 可执行入口（@deepseek-ai/dsh/lib/bin.js）
+ *  - 解析运行 dsh 的 Node 二进制（开发用系统 node，打包用捆绑的 resources/bin/node；
+ *    alpha.2 起不能用 ELECTRON_RUN_AS_NODE，见 electron/node-runtime.ts）
  *  - 以 `web --host 127.0.0.1 --port 0` 启动 dsh，随机回环端口
  *  - 解析 stdout 拿到实际端口，轮询 host.describe 直到就绪
  *  - 退出时优雅终止子进程（SIGTERM → SIGKILL）
@@ -15,6 +17,7 @@ import { DshAdapter } from '../adapter/index.js'
 import { checkProfile } from './profile-setup.js'
 import { CrashLoopDetector } from './crash-loop-detector.js'
 import { takeBootSnapshot, promoteToLastGood, restoreFromLastGood } from './guard-snapshot.js'
+import { resolveNodeBinary } from './node-runtime.js'
 
 const READY_TIMEOUT_MS = 90_000
 const KILL_TIMEOUT_MS = 5_000
@@ -49,26 +52,6 @@ function resolveEngineVersion(): string | null {
   } catch {
     return null
   }
-}
-
-/**
- * 解析可用的 Node 二进制。
- * 优先级：系统 node > electron-as-node。
- *
- * 0.1.5 起 dsh 的原生模块均为 N-API prebuild（koffi / node-addon-system），
- * ABI 跨 Node/Electron 稳定，打包产物无需独立 Node 运行时。
- */
-function resolveNodeBinary(): { exec: string; isElectron: boolean } {
-  // 系统 node（开发环境）
-  const fromNpm =
-    process.env.npm_node_execpath ||
-    process.env.npm_config_node_execpath ||
-    process.env.npm_node_install_path
-  if (fromNpm && existsSync(fromNpm)) {
-    return { exec: fromNpm, isElectron: false }
-  }
-  // 兜底：electron-as-node
-  return { exec: process.execPath, isElectron: true }
 }
 
 export interface DshManagerStatus {
