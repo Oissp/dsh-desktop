@@ -39,7 +39,7 @@ jobs:
     name: Build & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Enable Corepack & pnpm
         run: |
@@ -101,7 +101,7 @@ jobs:
     container:
       image: debian:13
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install build prerequisites (Debian 13)
         run: |
@@ -160,7 +160,7 @@ jobs:
 
       # 复用 build-test job 的 build 产物，不在 Debian 容器里重复 vite build + tsc。
       - name: Download build output
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: build-output
 

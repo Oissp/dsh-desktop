@@ -63,9 +63,9 @@ jobs:
       old_dsh: ${{ steps.locked.outputs.locked }}
       new_dsh: ${{ steps.target.outputs.target }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # sync job 不做依赖安装（bumped 条件才 pnpm install），store 目录可能不存在，
@@ -187,7 +187,7 @@ jobs:
       should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - id: check
         env:
@@ -239,11 +239,11 @@ jobs:
       # 用 Debian 13 (trixie) 容器构建，确保产物 glibc/库依赖与 Debian 13 匹配。
       image: debian:13
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Apply bumped source (dsh sync)
         if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: .
@@ -386,16 +386,16 @@ jobs:
     if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.should_release == 'true' }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           package-manager-cache: false
 
       - name: Apply bumped source (dsh sync)
         if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: .
@@ -473,7 +473,7 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.detect.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # 拉取完整历史 + 标签：生成 changelog 需要 git log 到上一个 tag
           fetch-depth: 0
@@ -481,13 +481,13 @@ jobs:
 
       - name: Apply bumped source (for commit)
         if: needs.sync-dsh.result == 'success' && needs.sync-dsh.outputs.bumped == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: .
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: release-assets
@@ -562,7 +562,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-assets-mac
           path: release-assets-mac
