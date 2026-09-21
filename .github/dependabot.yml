@@ -1,0 +1,112 @@
+# Dependabot 配置
+#
+# 本仓库此前没有这份文件，只有 GitHub 仓库级的「安全更新」开关在跑
+# （Settings → Code security → Dependabot security updates = enabled）。
+# 那个开关不读本文件：这里配的 schedule / groups 只作用于「版本更新」，
+# 安全更新的 PR 仍逐条提出——这是刻意的，理由见文件末尾。
+#
+# 依赖升级共三条路径，彼此不重叠：
+#   1. @deepseek-ai/dsh —— build-release.yml 的 sync-dsh job 每日查 npm latest，
+#      自动升依赖 + patch-bump 应用版本号 + 提交 + 发版。见下方 ignore。
+#   2. 安全更新 —— 仓库级开关，命中 GHSA 告警时自动开 PR。
+#   3. 常规版本更新 —— 本文件，每周一检查一次。
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # npm / pnpm
+  # ---------------------------------------------------------------------------
+  # ecosystem 写 npm：Dependabot 的 npm 生态同时支持 package-lock.json / yarn.lock /
+  # pnpm-lock.yaml，本项目用 pnpm（packageManager: pnpm@11.21.0），无需另写 pnpm。
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      # 与 build-release.yml 每日 06:00 UTC（北京 14:00）的定时发版错开时段
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+
+    groups:
+      # Electron 工具链整组提出，且不限制 update-types（主版本也并入）：
+      # electron-builder 的主版本升级会牵动 scripts/after-pack.mjs（原生模块补全 +
+      # 依赖闭包复制）、verify-deb / verify-mac / smoke-test，且 electron 是精确锁版本
+      # （无 ^，需人工确认 dsh 兼容性）。整组评审才看得到全貌，拆开反而容易漏掉联动。
+      electron-toolchain:
+        patterns:
+          - "electron"
+          - "electron-builder"
+          - "electron-updater"
+          - "@electron/*"
+          - "app-builder-lib"
+          - "builder-util"
+          - "builder-util-runtime"
+          - "dmg-builder"
+          - "electron-publish"
+
+      # 构建/测试工具链：只聚合 minor + patch（低风险，逐个提纯属噪声）。
+      # 主版本刻意不并入——breaking change 需要独立的 PR 配独立的验证。
+      build-tooling:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+          - "@vitest/*"
+          - "typescript"
+          - "concurrently"
+          - "cross-env"
+          - "wait-on"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # React 三件套必须同步升级（react / react-dom 版本号不一致会直接报错），
+      # 因此主版本也并入同组，不能拆成两个 PR 分别合。
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+
+    ignore:
+      # dsh 由 build-release.yml 的 sync-dsh job 每日自动同步，那条路径还会
+      # patch-bump 应用版本号并直接提交到 main。Dependabot 再对同一行开 PR
+      # 只会互相制造冲突，且重复了已有自动化。
+      #
+      # 注意：ignore 对安全更新同样生效，即 dsh 若出 GHSA 告警不会再自动开 PR。
+      # 告警本身仍会出现在 Security → Dependabot alerts，不会静默丢失；
+      # 届时走 sync-dsh 的手动通道升级（workflow_dispatch 可指定 dsh_version）。
+      - dependency-name: "@deepseek-ai/dsh"
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions
+  # ---------------------------------------------------------------------------
+  # workflow 里的 actions 都按主版本 tag 引用（checkout@v5 / cache@v6 /
+  # upload-artifact@v7 …），主版本升级（v7 → v8）只有靠 Dependabot 提醒。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    groups:
+      # actions 之间彼此独立、升级风险低（CI 全绿即可判定），全部合成一个 PR。
+      actions:
+        patterns:
+          - "*"
+
+# 安全更新为何不分组
+# ------------------
+# 本仓库当前的安全更新横跨两类风险完全不同的修复：
+#   - 低风险：wait-on → joi 这类 devDependency 的 patch 级升级，验完就能合。
+#   - 高风险：tar / app-builder-lib / builder-util-runtime / @xmldom/xmldom 都只能
+#     靠 electron-builder 25 → 26 的主版本升级解决（传递依赖被父包版本范围锁死）。
+# 若把两者塞进同一个 group，就无法只取低风险的那部分——必须等高风险验证完才能合，
+# 反而拖慢。故安全更新保持逐条提 PR，按风险分别处理。
+#
+# 代价是 PR 数量偏多。若日后噪声难以忍受，可再加一个 applies-to: security-updates
+# 的 group，把 development 依赖这类低风险项单独聚合。
