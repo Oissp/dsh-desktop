@@ -26,7 +26,10 @@ updates:
       time: "09:00"
       # 与 build-release.yml 每日 06:00 UTC（北京 14:00）的定时发版错开时段
       timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
+    # 首次扫描时本项目的直接依赖就有 10 个更新目标，5 会让超出的部分被静默丢弃，
+    # 且 Dependabot 只在配置变更或 schedule 触发时才重新扫描，被丢的那批要等到
+    # 下一次全量扫描才补提。提到 10 留出余量。
+    open-pull-requests-limit: 10
 
     groups:
       # Electron 工具链整组提出，且不限制 update-types（主版本也并入）：
