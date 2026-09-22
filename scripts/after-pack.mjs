@@ -12,7 +12,7 @@
  */
 import { cpSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 // 原生模块族定义（包名/路径）抽到 lib/native-modules.mjs，供 verify-deb /
 // verify-mac / smoke-test 共用，避免路径硬编码多处不同步。
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
