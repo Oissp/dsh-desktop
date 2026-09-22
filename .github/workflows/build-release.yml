@@ -188,6 +188,9 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # 需要 HEAD~1 比较 package.json 的 version 字段是否在本 push 中变更
+          fetch-depth: 2
 
       - id: check
         env:
@@ -201,6 +204,42 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "待发布版本: $VERSION"
+
+          # push 触发的发版门：只接受「开发者版本号 bump」的 push。
+          # push.paths: ['package.json'] 无法区分版本号变更与 devDep 升级，故在此字段级判定：
+          #   1. bot 自身推送的 sync 提交（actor=github-actions[bot]）——发版已在原
+          #      schedule/dispatch run 内完成（GITHUB_TOKEN 推送本不应再触发，此处防御其行为变化）。
+          #   2. 版本号字段未变更（如 Dependabot devDep 升级只改依赖版本不改应用版本号）——
+          #      非发版提交。否则当目标版本 release 尚不存在时会误触发一次完整发版（bug）。
+          SKIP_REASON=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+              SKIP_REASON="bot sync 自重触发（发版已在原 run 完成）"
+            else
+              PREV_VER=$(git show 'HEAD~1:package.json' 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version||'')}catch{console.log('')}})" 2>/dev/null || echo "")
+              if [ -z "$PREV_VER" ]; then
+                echo "无 HEAD~1（首次提交），按版本号 bump 处理"
+              elif [ "$PREV_VER" = "$VERSION" ]; then
+                SKIP_REASON="package.json 变更但版本号未变（$VERSION，如 Dependabot devDep 升级）"
+              else
+                echo "版本号 bump：$PREV_VER → $VERSION"
+              fi
+            fi
+          fi
+
+          if [ -n "$SKIP_REASON" ]; then
+            echo "::notice::跳过发版：$SKIP_REASON"
+            SHOULD_RELEASE=false
+            echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+            {
+              echo "## 发版决策"
+              echo "- 触发: \`${{ github.event_name }}\`（actor=${{ github.actor }}）"
+              echo "- 版本: \`$VERSION\`"
+              echo "- should_release: \`$SHOULD_RELEASE\`（$SKIP_REASON）"
+              echo "- sync-dsh: \`${{ needs.sync-dsh.result }}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           # 幂等：v<version> release 已存在则跳过（force 可绕过）
           if [ "$FORCE" = "true" ]; then

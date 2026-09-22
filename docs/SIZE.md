@@ -9,7 +9,7 @@
 dsh 依赖闭包不能交给 electron-builder 的默认依赖收集：在 pnpm 环境下，它可能遗漏 `@deepseek-ai/*` 的传递依赖，导致打包后的引擎无法启动。因此 `scripts/after-pack.mjs` 会：
 
 1. 复制扁平化 `node_modules` 中的运行时依赖
-2. 排除 `package.json` 中列出的开发依赖和构建工具
+2. 排除 `package.json` 中列出的开发依赖、**以及它们的传递依赖闭包**（见下）和构建工具
 3. 排除非目标平台/架构的原生预构建包
 4. 验证目标平台的 koffi / node-addon-system 原生二进制实际存在于产物
 
@@ -23,7 +23,11 @@ dsh 依赖闭包不能交给 electron-builder 的默认依赖收集：在 pnpm �
 
 ## 不应进入产物的内容
 
-`after-pack.mjs` 会排除开发与构建工具，例如 Electron 开发运行时、electron-builder、TypeScript、Vite、Vitest、类型定义和打包辅助二进制。不要通过“只复制少量依赖”的方式进一步裁剪，除非已经验证 dsh 在打包产物中可以启动。
+`after-pack.mjs` 会排除开发与构建工具，例如 Electron 开发运行时、electron-builder、TypeScript、Vite、Vitest、类型定义和打包辅助二进制。
+
+仅按名字排除「直接」devDependencies 会漏掉 dev 工具链的传递依赖（babel、vitest 内部包等数百个），它们的名字不在 devDependencies 中，整体复制时会被原样打进产物——这是 `.deb` 体积大头。`after-pack.mjs` 用 `pnpm list` 解析真实依赖树，计算 **dev-only 传递闭包 = (全量闭包) − (prod 闭包)** 并一并排除：这些包不被任何 prod 依赖可达，运行时不会被加载，排除安全。`pnpm list` 失败时回退到仅排除直接 devDependencies（体积偏大但不破坏功能）。
+
+不要通过"只复制少量依赖"的白名单方式进一步裁剪，除非已经验证 dsh 在打包产物中可以启动。
 
 ## 验证
 

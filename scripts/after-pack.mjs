@@ -81,6 +81,53 @@ function loadDevDeps(projectRoot) {
   }
 }
 
+/** 递归收集 pnpm list 节点下的全部依赖名（含传递依赖），写入 set。 */
+function collectDeps(node, set) {
+  if (!node || typeof node !== 'object') return
+  for (const key of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+    const deps = node[key]
+    if (!deps) continue
+    for (const [name, info] of Object.entries(deps)) {
+      set.add(name)
+      collectDeps(info, set)
+    }
+  }
+}
+
+/**
+ * 计算仅由 devDependencies 引入的传递依赖闭包 = (全量闭包) − (prod 闭包)。
+ *
+ * loadDevDeps 只拿到「直接」devDependencies 的 16 个名字，但 dev 工具链的传递依赖
+ * （babel、vitest 内部包等数百个）名字不在其中，整体复制时会被原样打进产物——
+ * 这是 .deb 体积大头（数百 MB 原始数据 → 数十 MB xz 压缩后的死重）。
+ *
+ * 这里用 pnpm list 解析真实依赖树：dev-only 集合里的包不被任何 prod 依赖可达，
+ * 运行时不会被加载，排除安全。失败则返回 null，回退到仅排除直接 devDependencies
+ * （当前行为：体积偏大但不破坏功能）。
+ */
+function loadDevOnlyClosure(projectRoot) {
+  const opts = { cwd: projectRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+  const all = spawnSync('pnpm', ['list', '--json', '--depth', 'Infinity'], opts)
+  const prod = spawnSync('pnpm', ['list', '--prod', '--json', '--depth', 'Infinity'], opts)
+  if (all.status !== 0 || prod.status !== 0 || !all.stdout || !prod.stdout) {
+    console.warn('[afterPack] pnpm 依赖闭包查询失败，回退到仅排除直接 devDependencies（产物体积偏大）')
+    return null
+  }
+  try {
+    const allSet = new Set()
+    const prodSet = new Set()
+    collectDeps(JSON.parse(all.stdout)[0], allSet)
+    collectDeps(JSON.parse(prod.stdout)[0], prodSet)
+    const devOnly = new Set()
+    for (const name of allSet) if (!prodSet.has(name)) devOnly.add(name)
+    console.log(`[afterPack] dev-only 传递闭包：${devOnly.size} 个包将排除（全量 ${allSet.size} / prod ${prodSet.size}）`)
+    return devOnly
+  } catch (e) {
+    console.warn(`[afterPack] pnpm 闭包解析异常：${e.message}，回退到仅排除直接 devDependencies`)
+    return null
+  }
+}
+
 /** electron-builder Arch 枚举 → 字符串（context.arch 是 Arch 枚举值）。
  *  注意 Arch 的真实数值：ia32=0 x64=1 armv7l=2 arm64=3 universal=4
  *  （builder-util/out/arch.d.ts）。 */
@@ -102,9 +149,11 @@ function isNonTargetPrebuild(pkgName, targetPlatform, targetArch) {
   return plat !== targetPlatform || arch !== targetArch
 }
 
-/** 是否应排除某顶层包：dev 依赖、构建工具，或非目标平台的 prebuild。 */
-function shouldExclude(name, devDeps, targetPlatform, targetArch) {
+/** 是否应排除某顶层包：dev 依赖、dev-only 传递闭包、构建工具，或非目标平台的 prebuild。 */
+function shouldExclude(name, devDeps, devOnlyClosure, targetPlatform, targetArch) {
   if (devDeps.has(name)) return true
+  // dev 工具链的传递依赖（babel/vitest 内部包等）：不被任何 prod 依赖可达，运行时不加载
+  if (devOnlyClosure && devOnlyClosure.has(name)) return true
   // 构建/打包工具链（即使非 devDep 也排除，运行时不加载）
   const buildTools = new Set(['app-builder-bin', '7zip-bin', 'esbuild', 'electron-builder-binaries'])
   if (buildTools.has(name)) return true
@@ -122,6 +171,7 @@ export default async function afterPack(context) {
   }
 
   const devDeps = loadDevDeps(projectRoot)
+  const devOnlyClosure = loadDevOnlyClosure(projectRoot)
   // 目标平台/架构：用于排除非目标平台的 prebuild（context.arch 为数字枚举）
   const targetPlatform = context.electronPlatformName ?? packager.platform.nodeName
   const targetArch = archName(context.arch)
@@ -144,7 +194,7 @@ export default async function afterPack(context) {
     : join(appBundle, 'resources')
   const dest = join(appResources, 'app', 'node_modules')
 
-  console.log(`[afterPack] 复制 node_modules → ${dest}（排除 devDependencies 与构建工具）`)
+  console.log(`[afterPack] 复制 node_modules → ${dest}（排除 devDependencies 闭包与构建工具）`)
   rmSync(dest, { recursive: true, force: true })
   cpSync(src, dest, {
     recursive: true,
@@ -160,7 +210,7 @@ export default async function afterPack(context) {
       if (pkgName !== null) {
         // 只判断包根路径（后面是包内文件）
         const isRoot = !seg[0].startsWith('@') ? seg.length === 1 : seg.length === 2
-        if (isRoot) return !shouldExclude(pkgName, devDeps, targetPlatform, targetArch)
+        if (isRoot) return !shouldExclude(pkgName, devDeps, devOnlyClosure, targetPlatform, targetArch)
       }
       return true
     },
