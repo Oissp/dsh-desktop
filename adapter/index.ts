@@ -130,8 +130,16 @@ export class DshAdapter {
     return this.client.cancel({ sessionId })
   }
 
-  archiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> {
-    return this.client.archiveSession({ sessionId })
+  /**
+   * 归档会话。
+   *
+   * `stopActivity: true` 让引擎先停掉会话的运行中工作（回合、子代理、后台任务、
+   * 定时提醒）再落盘归档。0.1.7-alpha.1 起不带该标志的归档会被运行中的工作拒绝
+   * （错误码 `workspace/session-active`），归档集合不变——需要"隐藏一个正在跑的
+   * 会话"的调用方（硬删）必须显式传入。
+   */
+  archiveSession(sessionId: string, options?: { stopActivity?: boolean }): Promise<{ archivedSessionIds: string[] }> {
+    return this.client.archiveSession({ sessionId, ...options })
   }
 
   /**

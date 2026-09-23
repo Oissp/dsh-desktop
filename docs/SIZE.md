@@ -18,6 +18,7 @@ dsh 依赖闭包不能交给 electron-builder 的默认依赖收集：在 pnpm �
 - `@deepseek-ai/*` 及其运行时依赖闭包
 - `node-pty`、`koffi`、`@deepseek-ai/node-addon-system-<platform>-<arch>`（N-API prebuild，0.1.5 起取代 fs-ext）等原生模块
 - dsh Web profile 初始化所需文件
+- `@deepseek-ai/libreoffice-kit` 及其平台引擎包（0.1.7 起 Office/PDF 转换依赖）。按宿主拆成 optionalDependencies：macOS 用 `libreoffice-kit-darwin-arm64`，Linux 用 `libreoffice-kit-wasm`（该包声明 `os: [linux]`，没有 Linux 原生包）。两者各约 200 MB，**是当前 .deb / .dmg 体积的主要来源**。它由 npm 的 `os` 字段完成平台筛选，`after-pack` 的包名模式过滤会原样保留正确的那一个（`-wasm` 不带 `-<platform>-<arch>` 后缀，不会被排除）。与 koffi / node-addon-system 不同，它不参与启动——只在真正跑 Office 转换时惰性解析——因此没有列入 `native-modules.mjs` 的产物断言；若将来要断言它进了产物，需另加一套按 `prebuilds.json` 而非 `.node` 路径的校验。
 
 `asar: false` 同样是必需设置：profile 初始化会创建符号链接，需要真实文件系统路径。
 

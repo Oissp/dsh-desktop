@@ -399,7 +399,15 @@ export class DshClient {
     return this.request('session/cancel', { request: payload })
   }
 
-  archiveSession(payload: { sessionId: string }): Promise<{ archivedSessionIds: string[] }> {
+  /**
+   * 归档会话。
+   *
+   * 0.1.7-alpha.1 起引擎在写入前做活跃度检查：会话若有运行中的回合、子代理、
+   * 后台任务或定时提醒，不带 `stopActivity` 的归档会被拒绝
+   * （`workspace/session-active`），归档集合保持不变。`stopActivity: true`
+   * 跳过检查、先落盘归档，再请求各 provider 停掉这些工作（不等待停稳）。
+   */
+  archiveSession(payload: { sessionId: string; stopActivity?: boolean }): Promise<{ archivedSessionIds: string[] }> {
     return this.request('workspace/archiveSession', { request: payload })
   }
 

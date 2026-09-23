@@ -8,7 +8,7 @@ import { ipcMain, dialog, app, shell, nativeTheme, Notification, type BrowserWin
 import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DshManager } from './dsh-manager.js'
-import { drainPurged } from './archive-cleanup.js'
+import { drainPurged, hideForHardDelete } from './archive-cleanup.js'
 import type { SettingsStore } from './settings-store.js'
 import type { SafeCredentialStore } from './credential-store.js'
 import { fetchWithTimeout, isAbortError } from '../shared/fetch-timeout.js'
@@ -148,26 +148,22 @@ export function registerIpc(
   )
   ipcMain.handle('session:history', (_e, sessionId: string) => run(() => adapter().getHistory(sessionId)))
 
-  // 硬删除：先归档（dsh 原生：立即从活跃列表移除，session.list 不再返回），
-  // 再取消运行中的 turn，最后尽力删除会话日志文件（数据清除）。
+  // 硬删除：先归档（dsh 没有删除 RPC，归档是把会话从列表隐藏的唯一手段），
+  // 再尽力删除会话日志文件（数据清除）。
   // 之所以要先归档：dsh 的 session 存储持有内存注册表，仅外部删文件后
   // session.list 仍会返回该会话（看起来像删除无反应）。
+  // 注意归档只让会话在**持久化**列表里消失：live 会话仍会被 session.list 合并
+  // 返回（真机验证，0.1.7-alpha.2），官方 UI 靠 workspace/follow 的
+  // archivedSessionIds 自己过滤掉——下面 drainPurged 正是靠这一点判断引擎是否
+  // 还持有该会话。
+  // 归档语义（含为什么必须带 stopActivity）见 hideForHardDelete。
   // 删完文件再取消归档，把 id 从引擎的归档集合里摘掉——集合不再只增不减。
   // 但引擎仍持有该会话时不能摘：session.list 会合并内存会话，摘掉等于让它
   // 带着原 workspace 槽位复活到活跃列表。这种情况记入队列由轮询补摘。
   ipcMain.handle('session:hardDelete', (_e, sessionId: string, cwd?: string) =>
     run(async () => {
       const a = adapter()
-      try {
-        await a.archiveSession(sessionId)
-      } catch {
-        // 归档失败不阻塞删除（尽力而为）
-      }
-      try {
-        await a.cancelTurn(sessionId)
-      } catch {
-        // 忽略：未运行或已结束
-      }
+      await hideForHardDelete(a, sessionId)
       try {
         const sessionsRoot = join(manager.home, 'sessions')
         const projectDir = cwd ? join(sessionsRoot, projectKey(cwd)) : join(sessionsRoot, '_no-cwd')
