@@ -1,8 +1,8 @@
 /**
  * 原生模块平台包族定义——单一真相源。
  *
- * after-pack.mjs（构建期补全 + 产物断言）、verify-deb.mjs / verify-mac.mjs /
- * smoke-test.mjs（产物校验）共用此定义，避免各处硬编码包名/路径不同步：
+ * after-pack.mjs（构建期补全 + 产物断言）、verify-deb.mjs / smoke-test.mjs
+ * （产物校验）共用此定义，避免各处硬编码包名/路径不同步：
  * 某个 prebuild 布局变化时只改这里一处，所有校验同步生效。
  *
  * 这些族用 optionalDependencies 分发各平台 prebuild 二进制，运行时按包名

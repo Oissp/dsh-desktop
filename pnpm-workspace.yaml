@@ -13,7 +13,7 @@ allowBuilds:
   electron: true
   # Windows 安装器生成器（electron-builder 26 → electron-builder-squirrel-windows
   # → electron-winstaller），自带 install 脚本选 7z 架构二进制。本项目只出
-  # Linux deb + macOS dmg/zip，这条路径用不到，故显式拒绝而不是允许。
+  # Linux deb，这条路径用不到，故显式拒绝而不是允许。
   #
   # 必须写 false、不能省略：pnpm v11 的 strictDepBuilds 默认为 true，未列出的
   # 构建脚本会让整个 install 以 ERR_PNPM_IGNORED_BUILDS 失败；只有显式 false

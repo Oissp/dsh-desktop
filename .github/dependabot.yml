@@ -34,7 +34,7 @@ updates:
     groups:
       # Electron 工具链整组提出，且不限制 update-types（主版本也并入）：
       # electron-builder 的主版本升级会牵动 scripts/after-pack.mjs（原生模块补全 +
-      # 依赖闭包复制）、verify-deb / verify-mac / smoke-test，且 electron 是精确锁版本
+      # 依赖闭包复制）、verify-deb / smoke-test，且 electron 是精确锁版本
       # （无 ^，需人工确认 dsh 兼容性）。整组评审才看得到全貌，拆开反而容易漏掉联动。
       electron-toolchain:
         patterns:

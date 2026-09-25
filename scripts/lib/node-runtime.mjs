@@ -9,7 +9,7 @@
  *
  * 本模块负责构建期下载官方 Node 二进制并放进产物 resources/bin/，供
  * electron/dsh-manager.ts 的 resolveNodeBinary 在打包环境解析。after-pack.mjs
- * 调 placeNodeRuntime 写入；verify-deb / verify-mac / smoke-test 共用路径常量
+ * 调 placeNodeRuntime 写入；verify-deb / smoke-test 共用路径常量
  * 做存在性断言，避免各处硬编码不同步。
  *
  * 版本选 Node 24 LTS（Krypton），与 Electron 44.2 内嵌 Node（24.20）同大行，

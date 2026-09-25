@@ -6,15 +6,15 @@
  * 这里直接整体复制扁平化的 node_modules，保证依赖闭包完整。
  *
  * 平台原生模块补全（031）：koffi 等用 optionalDependencies 分发平台二进制
- * （@koromix/koffi-<platform>-<arch>）。本机 macOS 打包 win 时，darwin 平台包
- * 会被复制但 win 平台包缺失 → Windows 上原生模块加载失败 → dsh 引擎起不来。
- * 这里在打包前把目标平台的原生模块包补进 src，保证跨平台打包不缺二进制。
+ * （@koromix/koffi-<platform>-<arch>）。打包机架构与目标架构不一致时，目标平台的
+ * 包可能缺失 → 原生模块加载失败 → dsh 引擎起不来。这里在打包前把目标平台的原生
+ * 模块包补进 src，保证产物不缺二进制（当前目标仅 linux/x64，该兜底通常不触发）。
  */
 import { cpSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 // 原生模块族定义（包名/路径）抽到 lib/native-modules.mjs，供 verify-deb /
-// verify-mac / smoke-test 共用，避免路径硬编码多处不同步。
+// smoke-test 共用，避免路径硬编码多处不同步。
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
 // 捆绑 Node 运行时（dsh 0.1.6-alpha.2 拒绝 ELECTRON_RUN_AS_NODE，需真 Node 跑引擎）
 import { nodePlatform, nodeArch, placeNodeRuntime } from './lib/node-runtime.mjs'
@@ -182,16 +182,9 @@ export default async function afterPack(context) {
     ensureFamilyPlatformPackage(family, projectRoot, packager.platform.nodeName, targetArch, src)
   }
 
-  // appOutDir 可能是 .app 目录本身，也可能是包含 .app 的父目录（mac）
-  let appBundle = appOutDir
-  if (!existsSync(join(appBundle, 'Contents', 'Info.plist'))) {
-    const app = readdirSync(appOutDir).find((name) => name.endsWith('.app'))
-    if (app) appBundle = join(appOutDir, app)
-  }
-  // mac 布局：Contents/Resources/app/node_modules；win/linux：resources/app/node_modules
-  const appResources = existsSync(join(appBundle, 'Contents', 'Resources'))
-    ? join(appBundle, 'Contents', 'Resources')
-    : join(appBundle, 'resources')
+  // 仅 Linux 目标：electron-builder 的 linux-unpacked 布局是
+  // <appOutDir>/resources/app/node_modules。
+  const appResources = join(appOutDir, 'resources')
   const dest = join(appResources, 'app', 'node_modules')
 
   console.log(`[afterPack] 复制 node_modules → ${dest}（排除 devDependencies 闭包与构建工具）`)
