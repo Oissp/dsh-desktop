@@ -14,7 +14,6 @@ export default defineConfig({
       ...testFiles('src'),
       ...testFiles('adapter'),
       ...testFiles('electron'),
-      ...testFiles('plugins/__tests__'),
       ...testFiles('scripts'),
     ],
     exclude: [

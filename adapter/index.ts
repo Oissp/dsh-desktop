@@ -155,7 +155,7 @@ export class DshAdapter {
 
   /**
    * 拉取已归档会话：打开 workspace/follow 流，读首帧 baseline 后取消。
-   * baseline.archivedSessionIds 即归档集合；各 workspace.sessionIds → path 映射给出 cwd（用于删除定位）。
+   * baseline.archivedSessionIds 即归档集合；cwd 见 archivedCwds。
    */
   async listArchivedSessions(): Promise<ArchivedSessionInfo[]> {
     const stream = this.client.workspaceFollow()
@@ -168,25 +168,20 @@ export class DshAdapter {
       this.client.muxCancel(stream)
     }
     if (!baseline) return []
-    const archivedIds = (baseline.archivedSessionIds as unknown[] | undefined) ?? []
-    // 构建 sessionId → workspace.path 映射（归档会话仍保留在其 workspace 的 sessionIds 中）
-    const cwdBySession = new Map<string, string>()
-    const items = (baseline.items as unknown[] | undefined) ?? []
-    for (const w of items) {
-      const ws = w as Record<string, unknown>
-      const path = typeof ws.path === 'string' ? ws.path : undefined
-      const ids = (ws.sessionIds as unknown[] | undefined) ?? []
-      if (!path) continue
-      for (const id of ids) {
-        if (typeof id === 'string') cwdBySession.set(id, path)
-      }
-    }
-    return archivedIds
+    const archivedIds = ((baseline.archivedSessionIds as unknown[] | undefined) ?? [])
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
-      .map((sessionId) => ({
-        sessionId,
-        cwd: cwdBySession.get(sessionId),
-      }))
+    // 会话摘要自带权威 cwd；拿不到（引擎瞬时不可用）就退回工作区成员表。
+    let summaries: SessionSummary[] = []
+    try {
+      summaries = await this.listSessions()
+    } catch {
+      // 硬删照旧尽力而为
+    }
+    const cwdBySession = archivedCwds(baseline, summaries)
+    return archivedIds.map((sessionId) => ({
+      sessionId,
+      cwd: cwdBySession.get(sessionId),
+    }))
   }
 
   // ---- 模型 ----
@@ -220,6 +215,48 @@ export class DshAdapter {
   close() {
     this.client.close()
   }
+}
+
+/**
+ * 归档集合的 sessionId → cwd 映射，用于硬删定位日志目录。
+ *
+ * 两个来源，`session/list` 的摘要优先（后写覆盖）：
+ *
+ *  1. baseline.items[].sessionIds → workspace.path。这只是**工作区成员表**
+ *     （引擎文档：`WorkspaceView.sessionIds` supplies real-Workspace membership,
+ *     not Session display order），只覆盖「已登记进工作区」的会话。
+ *  2. 会话摘要的 `cwd`——建会话时传入的原样字符串，与引擎
+ *     `sessions/<projectKey(cwd)>/<sessionId>` 的落盘规则同源，故可直接用于定位。
+ *
+ * 只靠来源 1 会漏：桌面向导走 `session/create {cwd}`（不带 workspaceId），
+ * 这类会话永远不是工作区成员，cwd 解析成 undefined，硬删于是去
+ * `sessions/_no-cwd` 找日志目录，真实目录永不删除（静默留下磁盘残留）。
+ * 归档会话仍出现在 `session/list` 里（引擎重启后亦然），故来源 2 覆盖完整。
+ *
+ * 纯函数，便于单测（不碰 transport）。
+ *
+ * @param baseline - workspace/follow 首帧 baseline（读 items[].path / sessionIds）
+ * @param summaries - session/list 的会话摘要（读 sessionId / cwd）
+ * @returns sessionId → cwd；两个来源都没有的会话不在 map 里
+ */
+export function archivedCwds(
+  baseline: Record<string, unknown>,
+  summaries: readonly SessionSummary[],
+): Map<string, string> {
+  const cwdBySession = new Map<string, string>()
+  const items = (baseline.items as unknown[] | undefined) ?? []
+  for (const w of items) {
+    const ws = w as Record<string, unknown>
+    const path = typeof ws.path === 'string' ? ws.path : undefined
+    if (!path) continue
+    for (const id of (ws.sessionIds as unknown[] | undefined) ?? []) {
+      if (typeof id === 'string') cwdBySession.set(id, path)
+    }
+  }
+  for (const s of summaries) {
+    if (s.cwd) cwdBySession.set(s.sessionId, s.cwd)
+  }
+  return cwdBySession
 }
 
 export type { DshEvent, MessageBlock }

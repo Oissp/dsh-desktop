@@ -33,7 +33,21 @@ export interface CompanionPluginEntry {
  * 插件列表消失）；重新加入清单则自动重装（每次启动都重新同步源码）。
  */
 export const COMPANION_PLUGINS: CompanionPluginEntry[] = [
-  { id: 'dsh-desktop-archived', description: '归档会话全局面板（sidebar.panellist + main slot）' },
+  // 当前为空：唯一条目 dsh-desktop-archived 已移除。
+  //
+  // 移除原因——dsh 0.1.7-alpha.1 起引擎自带完整的归档会话体验，该插件成了重复实现：
+  // 侧边栏「视图选项」提供三态筛选（隐藏已归档 / 全部对话（显示已归档）/ 仅显示已归档），
+  // 归档行原地置灰渲染、带行菜单与悬浮操作、可取消归档并支持撤销，空态也有独立文案。
+  // 插件那套「另起一个归档面板 + 侧边栏分组」靠 overflow:hidden 祖先做结构定位把
+  // DOM portal 进工作区区域，随引擎 UI 改动持续失效，已无保留价值。
+  //
+  // 移除后失效的能力（上游没有对应实现）：
+  //  - 归档会话只读查看器：引擎明确禁止打开归档行（aria-description
+  //    「已归档对话暂时无法查看，请取消归档后查看」），只能先取消归档再查看。
+  //  - 归档会话彻底删除：引擎没有删除 RPC（README：sessions can be archived but
+  //    never deleted）。桌面端的 session:hardDelete 仍保留在 __desktop__ 桥上，但
+  //    已无应用内调用方。
+  //
   // 新增伴随插件在此添加，例如：
   // { id: 'harness-pet', enabled: false, description: '桌面宠物（默认关）' },
 ]
