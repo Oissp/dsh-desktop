@@ -20,3 +20,28 @@ allowBuilds:
   # 才是「已决策、静默跳过」。
   electron-winstaller: false
 minimumReleaseAge: 0
+
+# 传递依赖的安全 override。
+#
+# 下面这些包都**不是**我们的直接依赖，Dependabot 修不了：它的安全更新是
+# 「抬高一个显式声明的依赖、把修复带上来」。这两条链路上唯一的显式依赖，
+# 一个是 @deepseek-ai/dsh（在 .github/dependabot.yml 的 ignore 里，而 ignore
+# 对安全更新同样生效），另一个 electron-builder 已经是最新 —— 两个都抬不动，
+# 所以 21 条告警挂了 5 天、零 PR。`pnpm update <包名>` 也不可靠：实测只挪动了
+# sharp 与一半 js-yaml。要确定性就只能在这里钉解析结果。
+#
+# 每条都落在父包**声明的区间内**（fast-uri/js-yaml/qs/hono/xmldom 五条），
+# 即「一次崭新的 pnpm install 本来就会选到的版本」，没有逆着上游改行为。
+overrides:
+  fast-uri: 3.1.6 # ajv ^3.0.1；SSRF / host confusion（4 条 high）
+  js-yaml: 4.3.2 # cordis-plugin-include ^4.1.0；空 merge 源把 CPU 打满（high）
+  qs: 6.16.0 # express ^6.14.0 / body-parser ^6.15.2；DoS
+  hono: 4.13.5 # @hono/node-server peer ^4；查询串 / parseBody
+  '@xmldom/xmldom': 0.9.12 # plist 3.1.1 声明 ^0.9.10，正好收得下（9 条告警的来源）
+  # ↓ 这两条父包是**精确 pin**，override 是唯一的杠杆，也是仅有两处背离声明区间的改动：
+  fflate: 0.8.3 # @deepseek-ai/libreoffice-kit 精确锁 0.8.2，且上游最新的 0.1.2
+  # 仍锁 0.8.2（畸形 ZIP64 → unzipSync 死循环）。顺带把 dsh-session-log-export
+  # 那份 0.8.3 副本合并过来，少一份重复。
+  plist: 3.1.1 # app-builder-lib 精确锁 3.1.0，而 3.1.0 声明 xmldom ^0.8.0
+  # ——会把 xmldom 拖回不安全的 0.8.x；3.1.1 声明 ^0.9.10，才能与上面的
+  # 0.9.12 对齐（顺带把两份 plist 合并成一份）。仅在构建期解析自家 plist。
