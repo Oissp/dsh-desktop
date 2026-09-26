@@ -42,6 +42,15 @@ describe('redactSecrets — 已知 token 前缀', () => {
   })
 
   it('抹掉 AWS access key id 与 Google API key（无公开前缀可保留）', () => {
+    // 下面三个是**合成**值（AWS 文档的占位形状 + 顺序数字/字母），不是真凭据，
+    // 无需轮换。但它们与真实 key 的形状一致——本模块的规则要求的正是
+    // `(AKIA|ASIA)[0-9A-Z]{16}` 与 `AIza[0-9A-Za-z_-]{35}`，而 GitHub secret
+    // scanning 的检测器匹配的也是同一个格式，所以**没有**既能满足规则、又不像
+    // 真 key 的写法（Slack 那条夹具能写成 notareal… 是因为我们的规则比 GitHub 的
+    // 检测器宽松，这里两边一样严）。这两个形状会被报成
+    // "Amazon AWS Temporary Access Key ID" 与 "Google API Key"，已在仓库的
+    // secret scanning 里按 used_in_tests 结案——改这几个字面量请顺手看一眼
+    // https://github.com/Oissp/dsh-desktop/security/secret-scanning
     expect(redactSecrets('AKIAIOSFODNN7EXAMPLE 被拒')).toBe(`${REDACTED} 被拒`)
     expect(redactSecrets('ASIAIOSFODNN7EXAMPLE 被拒')).toBe(`${REDACTED} 被拒`)
     expect(redactSecrets('AIzaSyD-1234567890abcdefghijklmnopqrstu 无效')).toBe(`${REDACTED} 无效`)
