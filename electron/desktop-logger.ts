@@ -77,8 +77,11 @@ export function formatExitCode(exitCode: number): string {
   return `${String(exitCode)} / 0x${(exitCode >>> 0).toString(16).padStart(8, '0')}`
 }
 
-/** 安装 uncaughtException 捕获：首个异常落盘后请求致命退出，避免静默崩溃无现场。 */
-export function installUncaughtExceptionCapture(exit: (code: number) => void): () => void {
+/**
+ * 安装 uncaughtException 捕获：首个异常落盘后请求致命退出，避免静默崩溃无现场。
+ * 错误对象一并交给调用方，供其写崩溃报告（见 crash-report.ts）。
+ */
+export function installUncaughtExceptionCapture(exit: (code: number, error: unknown) => void): () => void {
   let handled = false
   const handler = (error: Error): void => {
     if (handled) return
@@ -87,7 +90,7 @@ export function installUncaughtExceptionCapture(exit: (code: number) => void): (
     try {
       activeLogger.errorCause(error)
     } finally {
-      exit(1)
+      exit(1, error)
     }
   }
   process.once('uncaughtException', handler)

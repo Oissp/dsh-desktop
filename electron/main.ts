@@ -1,15 +1,18 @@
 /**
  * electron/main.ts —— 应用入口。
  */
-import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, Tray, Notification, nativeImage, dialog, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DshManager } from './dsh-manager.js'
+import { DshManager, SHUTDOWN_GRACE_MS, KILL_TIMEOUT_MS } from './dsh-manager.js'
 import { SettingsStore } from './settings-store.js'
 import { registerIpc } from './ipc.js'
 import { createCredentialStore, userDataDir } from './credential-store.js'
 import { LogFileSink } from './log-sink.js'
-import { FileLogger, setLogger, installUncaughtExceptionCapture, installChildProcessGoneLogging, type DesktopLogger } from './desktop-logger.js'
+import { FileLogger, setLogger, installUncaughtExceptionCapture, installChildProcessGoneLogging, formatExitCode, type DesktopLogger } from './desktop-logger.js'
+import { writeCrashReport, type CrashReportFacts, type CrashSource } from './crash-report.js'
+import { redactSecrets } from './secret-redaction.js'
+import { QuitConfirmation, inspectQuitState } from './quit-confirmation.js'
 import { UpdateLifecycle } from './update-lifecycle.js'
 import { MainWindowGeneration } from './window-generation.js'
 import updaterModule from 'electron-updater'
@@ -18,14 +21,93 @@ const { autoUpdater } = updaterModule as { autoUpdater: typeof import('electron-
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
+const LOG_DIR = join(app.getPath('userData'), 'logs')
 
 // 日志器：app ready 前用 ConsoleLogger 兜底（uncaughtException 已可落盘需先有 sink）。
 // 尽早在模块加载时建 sink，确保崩溃现场不丢。
-const logSink = new LogFileSink(join(app.getPath('userData'), 'logs'))
+const logSink = new LogFileSink(LOG_DIR)
 const logger: DesktopLogger = new FileLogger(logSink)
 setLogger(logger)
-// 第一个未捕获异常：落盘后致命退出（必须在任何异步工作前注册）
-installUncaughtExceptionCapture((code) => app.exit(code))
+// 第一个未捕获异常：落盘 + 写崩溃报告后致命退出（必须在任何异步工作前注册）
+installUncaughtExceptionCapture((code, error) => {
+  void reportCrash('main', 'main-uncaught', error).finally(() => {
+    app.exit(code)
+  })
+})
+
+// ---- 崩溃报告（electron/crash-report.ts）----
+
+/** 渲染进程控制台环形缓冲：崩溃报告里最有用的一段现场，按字节上限只留尾部。 */
+const rendererConsole: string[] = []
+let rendererConsoleBytes = 0
+const RENDERER_CONSOLE_MAX_BYTES = 64 * 1024
+/** 当前窗口的诊断监听卸载函数（重建窗口时先卸旧的，避免重复记录）。 */
+let detachRendererDiagnostics: () => void = () => {}
+
+function pushRendererConsole(line: string): void {
+  // 先脱敏再入缓冲：官方 UI 的控制台错误里常见失败的 `Authorization` 头与带 token
+  // 的 URL，而这段缓冲会原样进崩溃报告（用户会把它贴进公开 issue）
+  const redacted = redactSecrets(line)
+  rendererConsole.push(redacted)
+  rendererConsoleBytes += Buffer.byteLength(redacted, 'utf8') + 1
+  while (rendererConsoleBytes > RENDERER_CONSOLE_MAX_BYTES && rendererConsole.length > 1) {
+    const dropped = rendererConsole.shift()
+    if (dropped !== undefined) rendererConsoleBytes -= Buffer.byteLength(dropped, 'utf8') + 1
+  }
+}
+
+function crashFacts(): CrashReportFacts {
+  return {
+    appVersion: app.getVersion(),
+    electron: process.versions.electron ?? '未知',
+    chrome: process.versions.chrome ?? '未知',
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+  }
+}
+
+/** 引擎状态快照，作为崩溃报告的诊断段。manager 在 ready 前未初始化。 */
+function engineDiagnostics(): string {
+  if (!manager) return '（引擎管理器尚未初始化）'
+  const s = manager.status()
+  return [
+    `引擎运行: ${s.running ? '是' : '否'}`,
+    `引擎就绪: ${s.ready ? '是' : '否'}`,
+    `引擎端口: ${s.port ?? '—'}`,
+    `引擎版本: ${s.version ?? '—'}`,
+    `恢复态: ${s.recovery ? '是' : '否'}`,
+    `最近错误: ${s.error ?? '—'}`,
+    `工作目录: ${s.cwd ?? '—'}`,
+    `DSH_HOME: ${manager.home}`,
+    `日志目录: ${LOG_DIR}`,
+  ].join('\n')
+}
+
+/**
+ * 写一份崩溃报告并返回其路径（失败返回 null）。
+ * 额外诊断段由调用方给，未给则默认落引擎状态——三类崩溃现场里它都是关键上下文。
+ */
+async function reportCrash(
+  source: CrashSource,
+  phase: string,
+  error?: unknown,
+  diagnostics?: string,
+): Promise<string | null> {
+  const path = await writeCrashReport(LOG_DIR, {
+    time: new Date(),
+    source,
+    phase,
+    facts: crashFacts(),
+    error,
+    diagnostics: diagnostics ?? engineDiagnostics(),
+    consoleTail: rendererConsole,
+  })
+  if (path) logger.error(`[crash] ${source} 崩溃报告已写入 ${path}`)
+  else logger.warn(`[crash] ${source} 崩溃报告写入失败（${phase}）`)
+  return path
+}
 
 let mainWindow: BrowserWindow | null = null
 let windowGen: MainWindowGeneration | null = null
@@ -46,6 +128,19 @@ autoUpdater.autoInstallOnAppQuit = true
 // 更新生命周期实例（app.whenReady 中创建）。单飞检查、安装前 recheck、
 // 按版本去重后台提示，见 electron/update-lifecycle.ts。
 let updateLifecycle: UpdateLifecycle | null = null
+
+// ---- 退出确认（electron/quit-confirmation.ts）----
+// 判定"有没有任务在跑"：引擎未起来时无从谈起（没会话就不可能跑），直接放行。
+const quitConfirmation = new QuitConfirmation({
+  inspect: async () => {
+    const adapter = manager?.adapterInstance
+    if (!adapter) return { kind: 'idle', activeSessions: 0 }
+    return inspectQuitState(() => adapter.listSessions())
+  },
+  // 不带 owner window：窗口可能已隐藏到托盘（macOS 挂到隐藏窗口上的框不会显示），
+  // 且在关闭到托盘的模型里"退出"常常发生在窗口不可见时。
+  show: (options) => dialog.showMessageBox(options),
+})
 
 /** 显示/恢复主窗口（无窗口则新建）。托盘菜单与单击共用。 */
 function showWindow() {
@@ -72,7 +167,7 @@ function buildTrayMenu(): Menu {
       ? { label: `应用更新 v${readyVersion}`, click: applyDownloadedUpdate }
       : { label: '检查更新', click: () => updateLifecycle?.checkNow() },
     { type: 'separator' },
-    { label: '退出', click: () => shutdown() },
+    { label: '退出', click: () => requestQuit() },
   ])
 }
 
@@ -126,11 +221,44 @@ app.on('second-instance', () => {
 })
 
 /**
+ * 挂上渲染进程诊断：控制台尾部进环形缓冲，进程消失时落一份崩溃报告。
+ * 返回卸载函数——重建窗口时旧的 webContents 已死，但其监听器仍持有缓冲引用。
+ */
+function attachRendererDiagnostics(win: BrowserWindow): () => void {
+  const wc = win.webContents
+  const onConsole = (details: Electron.Event<Electron.WebContentsConsoleMessageEventParams>): void => {
+    // 只留 warning/error：官方 Web UI 的 info/debug 量极大，会把真正的崩溃前兆冲出缓冲
+    if (details.level !== 'warning' && details.level !== 'error') return
+    pushRendererConsole(`[${details.level}] ${details.message} (${details.sourceId}:${String(details.lineNumber)})`)
+  }
+  const onGone = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails): void => {
+    void reportCrash(
+      'renderer',
+      'renderer-gone',
+      undefined,
+      `渲染进程退出: reason=${details.reason} exitCode=${formatExitCode(details.exitCode)}`,
+    )
+  }
+  const onUnresponsive = (): void => {
+    pushRendererConsole('[main] 渲染进程无响应（unresponsive）')
+  }
+  wc.on('console-message', onConsole)
+  wc.on('render-process-gone', onGone)
+  wc.on('unresponsive', onUnresponsive)
+  return () => {
+    wc.off('console-message', onConsole)
+    wc.off('render-process-gone', onGone)
+    wc.off('unresponsive', onUnresponsive)
+  }
+}
+
+/**
  * 创建主窗口 Shell generation。窗口、导航防护、引擎端口跟踪由 MainWindowGeneration
  * 完整拥有；引擎崩溃重启换端口时调 windowGen.loadEngineUI / loadFallback 即可，
  * 状态自洽、无遗留监听器（借鉴 anywhere-labs/dsh-desktop ElectronShellGeneration）。
  */
 function createWindow() {
+  detachRendererDiagnostics()
   windowGen = new MainWindowGeneration({
     preloadPath: join(__dirname, 'preload.js'),
     appPath: app.getAppPath(),
@@ -148,6 +276,7 @@ function createWindow() {
     },
   })
   mainWindow = windowGen.window
+  detachRendererDiagnostics = attachRendererDiagnostics(mainWindow)
 }
 
 /**
@@ -231,9 +360,24 @@ function rebuildAppMenu() {
   setupMenu()
 }
 
-/** 优雅退出：先停掉 dsh 子进程，再退出应用。 */
-function shutdown() {
+/**
+ * 退出入口。
+ *
+ * @param confirm 是否先问一句"有任务在跑，确定退出吗"。
+ *   - true：用户主动退出（托盘菜单 / 应用菜单 / 关掉最后一个窗口）
+ *   - false：系统信号（SIGTERM/SIGINT）与更新安装——前者是 OS 在催我们走，此时弹框
+ *     会卡住注销/关机流程且未必有可用显示；后者用户刚点过"应用更新"，已经确认过。
+ */
+async function quitApp(confirm: boolean): Promise<void> {
   if (quitting) return
+  if (confirm) {
+    const ok = await quitConfirmation.confirm()
+    // 等待期间可能已有别的路径（信号 / 更新）启动了退出，此时无条件让位
+    if (!ok || quitting) return
+  } else {
+    // 绕过询问的路径：把决定做完了，关掉确认器，免得打开着的框被误读成"还能取消"
+    quitConfirmation.dispose()
+  }
   quitting = true
   windowGen?.markQuitting()
   if (tray) {
@@ -254,11 +398,18 @@ function shutdown() {
     }
   }
   if (running) {
-    // 最多等 6s，超时强制退出
-    const timer = setTimeout(() => finish(), 6000)
+    // 兜底超时：必须长于 stop() 的升级阶梯（SIGTERM 宽限 + SIGKILL 上限），否则
+    // 这里会先 app.exit(0)，把还在阶梯中的引擎变成孤儿——正是阶梯要避免的情况。
+    // 阶梯正常时（引擎 1s 内退出）这个计时器根本不会触发。
+    const timer = setTimeout(() => finish(), SHUTDOWN_GRACE_MS + KILL_TIMEOUT_MS + 1_000)
     manager
       .stop()
-      .catch(() => undefined)
+      .then((graceful) => {
+        if (!graceful) logger.warn('[shutdown] 引擎未响应 SIGTERM，已 SIGKILL 强制终止')
+      })
+      .catch((err) => {
+        logger.error(`[shutdown] 停止引擎失败: ${err instanceof Error ? err.message : String(err)}`)
+      })
       .finally(() => {
         clearTimeout(timer)
         finish()
@@ -266,6 +417,11 @@ function shutdown() {
   } else {
     finish()
   }
+}
+
+/** 需要先确认的用户主动退出（托盘菜单、应用菜单、关闭最后一个窗口）。 */
+function requestQuit(): void {
+  void quitApp(true)
 }
 
 app.whenReady().then(async () => {
@@ -286,13 +442,14 @@ app.whenReady().then(async () => {
   }
   // utility/GPU 等子进程异常退出落盘
   installChildProcessGoneLogging(app)
-  logger.info(`[boot] DSH Desktop 启动，版本 ${app.getVersion()}，日志目录 ${join(app.getPath('userData'), 'logs')}`)
+  logger.info(`[boot] DSH Desktop 启动，版本 ${app.getVersion()}，日志目录 ${LOG_DIR}`)
   // 更新生命周期：单飞检查 + 安装前 recheck + 按版本去重后台提示
   updateLifecycle = new UpdateLifecycle(autoUpdater, logger, {
     getWindow: () => mainWindow,
     rebuildTrayMenu,
     rebuildAppMenu,
-    requestQuit: () => shutdown(),
+    // 更新安装完成后的退出：用户已经点过"应用更新"，不再弹退出确认
+    requestQuit: () => void quitApp(false),
     markUpdateQuitting: () => {
       // 更新驱动的退出：置 quitting 让 before-quit 不拦截、窗口 close 处理器放行
       quitting = true
@@ -313,11 +470,23 @@ app.whenReady().then(async () => {
   })
 
   // 端口跟随：引擎崩溃重启换端口 → 窗口重新 loadURL 新端口（A0 端口漂移）
+  let recoveryReported = false
   manager.onStatus((s) => {
     if (s.port && s.ready) windowGen?.loadEngineUI(s.port, manager.token)
     // 崩溃恢复态：引擎已死，窗口回退到本地 React UI（展示恢复页）
     if (s.recovery && !s.ready) {
       windowGen?.loadFallback()
+      // 崩溃环熔断只触发一次：落一份引擎崩溃报告，并把路径回填到恢复页可见的
+      // lastError —— 报告写了但用户找不到，等于没写。
+      if (!recoveryReported) {
+        recoveryReported = true
+        void reportCrash('engine', 'engine-crash-loop').then((path) => {
+          if (path) manager.annotateError(`崩溃报告：${path}`)
+        })
+      }
+    } else if (!s.recovery) {
+      // 脱离恢复态（恢复成功或用户点了"重启内核"）→ 允许下一次熔断再写一份报告
+      recoveryReported = false
     }
   })
 
@@ -330,7 +499,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', (e) => {
   if (!quitting && manager && manager.status().running) {
     e.preventDefault()
-    shutdown()
+    requestQuit()
   }
 })
 
@@ -339,12 +508,14 @@ app.on('window-all-closed', () => {
   // 有托盘：保持后台运行（任何平台）
   if (tray) return
   // 无托盘（如开发早期）：非 macOS 退出，macOS 保持（符合惯例）
-  if (process.platform !== 'darwin') shutdown()
+  if (process.platform !== 'darwin') requestQuit()
 })
 
-// SIGTERM / SIGINT（进程被外部终止）也要清理 dsh 子进程
-process.on('SIGTERM', () => shutdown())
-process.on('SIGINT', () => shutdown())
+// SIGTERM / SIGINT（进程被外部终止）也要清理 dsh 子进程。
+// 不弹退出确认：信号通常来自注销/关机/服务编排，卡在这里会拖住整个登出流程，
+// 且此时未必还有可用显示。
+process.on('SIGTERM', () => void quitApp(false))
+process.on('SIGINT', () => void quitApp(false))
 
 // 兜底：应用退出时确保子进程被终止
 app.on('will-quit', () => {

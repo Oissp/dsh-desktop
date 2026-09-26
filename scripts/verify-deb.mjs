@@ -137,6 +137,33 @@ if (leaked.length === 0) {
   fail(`非目标平台 prebuild 泄入：${leaked.join(', ')}`)
 }
 
+console.log('\n[verify-deb] 产物裁剪（包内构建产物不应进包）')
+// after-pack 的 shouldExcludeWithinPackage 负责剔除包内的构建/诊断产物。这些不影响
+// 启动，但纯属死重（实测 node-pty 跨平台 prebuild ~23 MB、domino test/ ~7 MB、
+// 类型声明 ~11 MB）。此处做回归校验：一旦裁剪逻辑失效（例如 filter 改回只判包根），
+// 体积会悄悄涨回去、而功能测试全绿，所以必须在这里显式失败。
+const trimRules = [
+  { label: 'TypeScript 声明（*.d.ts / *.d.ts.map）', re: /\.d\.[cm]?ts(\.map)?$/, hint: 'shouldExcludeWithinPackage 未生效' },
+  { label: 'TypeScript 构建缓存（*.tsbuildinfo）', re: /\.tsbuildinfo$/, hint: 'shouldExcludeWithinPackage 未生效' },
+  { label: 'Windows 调试符号（*.pdb）', re: /\.pdb$/, hint: 'shouldExcludeWithinPackage 未生效' },
+  { label: 'node-pty 非目标平台 prebuild', re: /\/node-pty\/prebuilds\/(?!linux-x64\/)/, hint: 'node-pty 平台段判断失效' },
+  { label: 'domino 测试夹具', re: /\/@mixmark-io\/domino\/test\//, hint: 'domino 排除规则失效' },
+]
+for (const rule of trimRules) {
+  const hits = entries.filter((p) => rule.re.test(p))
+  if (hits.length === 0) {
+    ok(`已裁剪：${rule.label}`)
+  } else {
+    fail(`未裁剪：${rule.label}（${hits.length} 项，如 ${hits[0].slice(2)}）——${rule.hint}`)
+  }
+}
+// 反向断言：裁剪绝不能误伤目标平台的 node-pty 二进制（终端 PTY 功能依赖它）
+if (has((p) => p.includes('/node-pty/prebuilds/linux-x64/pty.node'))) {
+  ok('node-pty 目标平台 prebuild 保留（linux-x64/pty.node）')
+} else {
+  fail('缺 node-pty/prebuilds/linux-x64/pty.node——裁剪误伤目标平台 prebuild，终端功能将崩')
+}
+
 console.log('\n[verify-deb] 桌面集成（.desktop + hicolor 图标）')
 // .desktop 文件应在 /usr/share/applications/<executableName>.desktop
 const desktopFiles = entries.filter((p) => p.startsWith('./usr/share/applications/') && p.endsWith('.desktop'))

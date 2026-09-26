@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import type { autoUpdater as AutoUpdaterType } from 'electron-updater'
 import type { DesktopLogger } from './desktop-logger.js'
 import { UpdateStateStore } from './update-state.js'
+import { DesktopUpdateHttpExecutor, DEFAULT_UPDATE_IDLE_TIMEOUT_MS } from './update-http-executor.js'
 
 const MANUAL_CHECK_TIMEOUT = 25_000
 const INITIAL_CHECK_DELAY = 15_000
@@ -93,11 +94,40 @@ export class UpdateLifecycle {
 
     if (!this.active) return
 
+    this.configureTransport()
     this.registerEvents()
 
     // 启动后延迟检查（避开引擎启动峰值），之后定时复检
     this.pollTimer = setTimeout(() => this.checkUpdates(false), INITIAL_CHECK_DELAY)
     this.intervalTimer = setInterval(() => this.checkUpdates(false), CHECK_INTERVAL)
+  }
+
+  /**
+   * 传输层加固：空闲超时 + 禁止降级。
+   *
+   * 1. electron-updater 默认的 socket 超时在 Electron 的 net.request 上不保证触发，
+   *    静默连接会永久挂起——见 update-http-executor.ts。
+   * 2. electron-updater 选定 channel 时会顺带把 allowDowngrade 打开（上游源码注释
+   *    明确指出），一旦打开，"远端 feed 指向更低版本"就会把用户降级。这里显式钉死。
+   */
+  private configureTransport(): void {
+    let idleTimeoutMs = DEFAULT_UPDATE_IDLE_TIMEOUT_MS
+    const raw = process.env.DSH_DESKTOP_UPDATE_HTTP_IDLE_TIMEOUT_MS
+    if (raw !== undefined && raw !== '') {
+      const parsed = Number(raw)
+      // 环境变量配错不该让应用启动崩掉：这里校验后回退默认值并留痕
+      if (Number.isSafeInteger(parsed) && parsed >= 1000 && parsed <= 2_147_483_647) {
+        idleTimeoutMs = parsed
+      } else {
+        this.logger.warn(
+          `[updater] DSH_DESKTOP_UPDATE_HTTP_IDLE_TIMEOUT_MS 取值非法（${raw}），回退默认 ${DEFAULT_UPDATE_IDLE_TIMEOUT_MS}ms`,
+        )
+      }
+    }
+    // httpExecutor 不在 electron-updater 的公开声明里，需断言后写入（上游官方桌面端同法）
+    const withTransport = this.autoUpdater as typeof this.autoUpdater & { httpExecutor: unknown }
+    withTransport.httpExecutor = new DesktopUpdateHttpExecutor(idleTimeoutMs)
+    this.autoUpdater.allowDowngrade = false
   }
 
   /** 手动触发检查（托盘 / 菜单点击）。 */

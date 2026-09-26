@@ -160,6 +160,65 @@ function shouldExclude(name, devDeps, devOnlyClosure, targetPlatform, targetArch
   return isNonTargetPrebuild(name, targetPlatform, targetArch)
 }
 
+/**
+ * 包**内部**的构建/诊断产物排除（借鉴上游 apps/desktop 的 runtime-file-policy.ts）。
+ *
+ * isNonTargetPrebuild 只能按**包名**后缀识别跨平台二进制，因此看不见"同一个包内
+ * 藏着多平台产物"的情况——node-pty 就是典型：它的 6 个平台 prebuild 全在
+ * node-pty/prebuilds/<platform>-<arch>/ 下，包名里没有平台标记。实测 Windows 两个
+ * prebuild 合计约 23 MB，在仅 Linux 的 .deb 里是纯死重。
+ *
+ * 只排除运行时绝不读取的东西，遵循"不认识就保留"：
+ *  - .d.ts / .d.ts.map：类型声明，运行时（引擎与插件）从不 require
+ *  - .tsbuildinfo：TypeScript 增量构建缓存
+ *  - .pdb：Windows 调试符号
+ *  - node-pty 非目标平台的 prebuild
+ *  - domino 的 test/：该包约 90% 的体积，运行时用不到
+ *
+ * 刻意**不**排除 .js.map 与随包发布的 src/*.ts：@deepseek-ai 各包会带上源码，
+ * 二者合计仅约 1.6 MB，却能让我们自己的崩溃日志堆栈还原到 TypeScript 源码——
+ * 与 crash-report 的可诊断性目标直接相关。
+ *
+ * @param pkgName 包名（"name" 或 "@scope/name"）
+ * @param within 包内相对路径（已去掉包名段）
+ */
+export function shouldExcludeWithinPackage(pkgName, within, targetPlatform, targetArch) {
+  const file = within.slice(within.lastIndexOf('/') + 1)
+  // 类型声明与声明映射（注意先判 .map：.d.ts.map 不以 .d.ts 结尾）
+  if (/\.d\.[cm]?ts\.map$/.test(file)) return true
+  if (/\.d\.[cm]?ts$/.test(file)) return true
+  if (/\.tsbuildinfo$/.test(file)) return true
+  // Windows 调试符号：任何包内都是死重
+  if (file.endsWith('.pdb')) return true
+
+  if (pkgName === 'node-pty' && within.startsWith('prebuilds/')) {
+    const platformDir = within.split('/')[1]
+    if (platformDir !== undefined && platformDir !== `${targetPlatform}-${targetArch}`) return true
+  }
+  // domino 的测试夹具占该包绝大部分体积，运行时只加载 lib/
+  if (pkgName === '@mixmark-io/domino' && (within === 'test' || within.startsWith('test/'))) return true
+
+  return false
+}
+
+/**
+ * 单个 rel 路径（相对 node_modules）是否应排除。
+ *
+ * 拆成「包名段 + 包内路径」两段：包根决定整个包的去留（dev 依赖、非目标平台
+ * prebuild 包），包内路径再做细粒度裁剪——后者按包名匹配是看不见的。
+ * rel 为 scope 目录本身（如 "@deepseek-ai"）时保留。
+ */
+export function shouldExcludePath(rel, { devDeps, devOnlyClosure, targetPlatform, targetArch }) {
+  const seg = rel.split('/')
+  const nameSegs = seg[0].startsWith('@') ? 2 : 1
+  if (seg.length < nameSegs) return false
+  const pkgName = seg.slice(0, nameSegs).join('/')
+  if (seg.length === nameSegs) {
+    return shouldExclude(pkgName, devDeps, devOnlyClosure, targetPlatform, targetArch)
+  }
+  return shouldExcludeWithinPackage(pkgName, seg.slice(nameSegs).join('/'), targetPlatform, targetArch)
+}
+
 export default async function afterPack(context) {
   const { appOutDir, packager } = context
   const projectRoot = packager.projectDir
@@ -187,25 +246,14 @@ export default async function afterPack(context) {
   const appResources = join(appOutDir, 'resources')
   const dest = join(appResources, 'app', 'node_modules')
 
-  console.log(`[afterPack] 复制 node_modules → ${dest}（排除 devDependencies 闭包与构建工具）`)
+  console.log(`[afterPack] 复制 node_modules → ${dest}（排除 devDependencies 闭包、构建工具与包内构建产物）`)
   rmSync(dest, { recursive: true, force: true })
+  const filterCtx = { devDeps, devOnlyClosure, targetPlatform, targetArch }
   cpSync(src, dest, {
     recursive: true,
     filter: (p) => {
       if (p.includes('/.git/')) return false
-      // 只对"包根"做排除判断：node_modules/<name> 或 node_modules/<scope>/<name>
-      const rel = p.slice(src.length + 1)
-      const seg = rel.split('/')
-      // 包名 = 首层（非 scope）或 "@scope/name"（scope 包用完整名匹配 devDeps）
-      let pkgName = null
-      if (seg.length >= 1 && !seg[0].startsWith('@')) pkgName = seg[0]
-      else if (seg.length >= 2 && seg[0].startsWith('@')) pkgName = `${seg[0]}/${seg[1]}`
-      if (pkgName !== null) {
-        // 只判断包根路径（后面是包内文件）
-        const isRoot = !seg[0].startsWith('@') ? seg.length === 1 : seg.length === 2
-        if (isRoot) return !shouldExclude(pkgName, devDeps, devOnlyClosure, targetPlatform, targetArch)
-      }
-      return true
+      return !shouldExcludePath(p.slice(src.length + 1), filterCtx)
     },
   })
   try {
@@ -236,6 +284,20 @@ export default async function afterPack(context) {
     }
     console.log(`[afterPack] ✅ ${family.scope}/${pkgName} 原生二进制已在产物: ${destBin.slice(dest.indexOf('node_modules'))}`)
   }
+
+  // node-pty 的裁剪反向断言：shouldExcludeWithinPackage 会剔掉非目标平台的
+  // prebuilds/<platform>-<arch>/，但如果平台段判断写错（例如 targetPlatform 传成
+  // 'linux' 而目录名是 'linux-x64' 之外的形式），会把目标平台的 pty.node 一起剔掉，
+  // 引擎加载终端 PTY 时才崩。这里显式确认目标平台的 .node 仍在产物里。
+  const ptyPrebuild = join(dest, 'node-pty', 'prebuilds', `${targetPlatform}-${targetArch}`, 'pty.node')
+  if (!existsSync(ptyPrebuild)) {
+    throw new Error(
+      `[afterPack] 产物缺 node-pty 目标平台 prebuild: ${ptyPrebuild}\n` +
+      `  源 node_modules ${existsSync(join(src, 'node-pty', 'prebuilds', `${targetPlatform}-${targetArch}`, 'pty.node')) ? '有' : '无'}\n` +
+      '  有 → shouldExcludeWithinPackage 的平台段判断误排了目标平台 prebuild',
+    )
+  }
+  console.log(`[afterPack] ✅ node-pty 目标平台 prebuild 已在产物: prebuilds/${targetPlatform}-${targetArch}`)
 
   // 捆绑 Node 运行时：dsh 0.1.6-alpha.2 的 node-addon-require-builtin 在
   // ELECTRON_RUN_AS_NODE 模式下拿不到 V8 embedder context 直接拒绝启动引擎，

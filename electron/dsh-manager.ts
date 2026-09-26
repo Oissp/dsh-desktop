@@ -18,9 +18,13 @@ import { checkProfile } from './profile-setup.js'
 import { CrashLoopDetector } from './crash-loop-detector.js'
 import { takeBootSnapshot, promoteToLastGood, restoreFromLastGood } from './guard-snapshot.js'
 import { resolveNodeBinary } from './node-runtime.js'
+import { redactSecrets } from './secret-redaction.js'
 
 const READY_TIMEOUT_MS = 90_000
-const KILL_TIMEOUT_MS = 5_000
+/** SIGTERM 之后等待引擎自行退出的宽限期（ms）——超过即升级为 SIGKILL。 */
+export const SHUTDOWN_GRACE_MS = 10_000
+/** SIGKILL 之后等待进程被回收的上限（ms）——超过即认定杀不掉（孤儿进程）。 */
+export const KILL_TIMEOUT_MS = 5_000
 /** 引擎稳定运行的判定时间：就绪后持续运行此时长才认定"稳定"，提升快照 + 重置崩溃环。 */
 const STABLE_BOOT_MS = 45_000
 /** 崩溃后自动重启延迟（ms）。 */
@@ -134,6 +138,17 @@ export class DshManager {
   }
 
   /**
+   * 往当前 lastError 追加一段说明并推送状态。
+   * 用于宿主侧补充的现场信息（崩溃报告路径等）——引擎自身不知道这些，
+   * 但恢复页要把它显示给用户，否则报告写了也没人找得到。
+   */
+  annotateError(suffix: string): void {
+    const base = this.lastError ?? ''
+    this.lastError = base === '' ? suffix : `${base}\n${suffix}`
+    this.emitStatus()
+  }
+
+  /**
    * 手动重启内核（恢复页"重启内核"按钮调用）。
    * 清除崩溃环检测器，重新走完整 boot 流程。
    */
@@ -241,7 +256,8 @@ export class DshManager {
     child.stderr?.on('data', onStderr)
 
     child.on('error', (err) => {
-      this.lastError = `dsh 进程启动失败: ${err.message}`
+      // 与 handleStderr 同样先脱敏：err.message 里可能带 spawn 的参数或路径
+      this.lastError = redactSecrets(`dsh 进程启动失败: ${err.message}`)
       this.emitStatus()
     })
 
@@ -262,7 +278,12 @@ export class DshManager {
       this.adapter = null
       this.proc = null
       if (!this.stopping) {
-        this.lastError = `dsh 进程退出（code=${code ?? ''} signal=${signal ?? ''}）`
+        // 退出码 0 且无信号 = 引擎**自己**决定退出。它本不该主动结束，所以这同样是
+        // 故障而不是"正常结束"——不区分的话这类静默退出会被当成干净关闭而不触发重启。
+        const selfExit = code === 0 && signal === null
+        this.lastError = selfExit
+          ? 'dsh 引擎意外自行退出（退出码 0，无信号）'
+          : `dsh 进程退出（code=${code ?? ''} signal=${signal ?? ''}）`
         if (wasRunning) {
           // 崩溃环检测：决定是否自动重启
           const verdict = this.crashDetector.recordCrash()
@@ -335,7 +356,11 @@ export class DshManager {
     const line = chunk.trim()
     if (!line) return
     if (/^\(node:\d+\)|deprecat|experimental warning/i.test(line)) return
-    this.lastError = line.slice(0, 300)
+    // lastError 会进两处**持久**输出：恢复页 UI 和 userData/logs 落盘文件。
+    // 引擎自带的脱敏是结构化的（按 settings schema 的 role('secret') 字段），
+    // 对自由文本无效——而凭据正是从自由文本漏出来的（失败请求的 URL、栈里的
+    // Authorization 头）。这里补一层文本模式脱敏，见 secret-redaction.ts。
+    this.lastError = redactSecrets(line).slice(0, 300)
   }
 
   private async waitUntilReady(): Promise<DshManagerStatus> {
@@ -378,8 +403,17 @@ export class DshManager {
     throw new Error('dsh 启动超时')
   }
 
-  /** 优雅停止 dsh 子进程。 */
-  async stop(): Promise<void> {
+  /**
+   * 停止 dsh 子进程：SIGTERM → 10s → SIGKILL → 5s → 放弃并报错。
+   *
+   * 借鉴上游 apps/desktop 的 host-process.ts 关机升级阶梯。原实现是"超时即
+   * SIGKILL，300ms 后无条件当成功"——那会把**没杀掉的引擎**当成已停止：主进程照常
+   * 退出，引擎变成孤儿继续占着回环端口与 DSH_HOME，下次启动就撞端口、抢 profile。
+   * 这里每一级都等到确认，杀不掉就明确抛错，而不是假装成功。
+   *
+   * @returns 是否在 SIGTERM 宽限期内自行退出（false = 动用了 SIGKILL）
+   */
+  async stop(): Promise<boolean> {
     this.stopping = true
     // 停止时取消稳定计时器
     if (this.stableTimer) {
@@ -389,30 +423,49 @@ export class DshManager {
     const child = this.proc
     if (!child) {
       this.stopping = false
-      return
+      return true
     }
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        this.proc = null
-        this.adapter?.close()
-        this.adapter = null
-        this.ready = false
-        this.stopping = false
-        this.emitStatus()
-        resolve()
-      }
-      if (child.exitCode !== null) return done()
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL')
-        setTimeout(done, 300)
-      }, KILL_TIMEOUT_MS)
-      child.once('exit', () => {
-        clearTimeout(timer)
-        done()
-      })
-      child.kill('SIGTERM')
+    const exited = new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve()
+      else child.once('exit', () => resolve())
     })
+
+    child.kill('SIGTERM')
+    const graceful = await exitsWithin(exited, SHUTDOWN_GRACE_MS)
+    if (!graceful) {
+      console.warn('[dsh-desktop] 引擎未在宽限期内响应 SIGTERM，升级为 SIGKILL')
+      child.kill('SIGKILL')
+      if (!(await exitsWithin(exited, KILL_TIMEOUT_MS))) {
+        this.teardown()
+        throw new Error('dsh 引擎在 SIGKILL 后仍未退出，可能已变成孤儿进程并占用端口')
+      }
+    }
+    this.teardown()
+    return graceful
   }
+
+  /** 停止/退出后的状态收尾。幂等——spawn 时的 exit 处理器也会做同样的事。 */
+  private teardown(): void {
+    this.proc = null
+    this.adapter?.close()
+    this.adapter = null
+    this.ready = false
+    this.stopping = false
+    this.emitStatus()
+  }
+}
+
+/** 等待 exited 落定，最多 timeoutMs；返回是否已退出。用于关机升级阶梯的每一级。 */
+function exitsWithin(exited: Promise<void>, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    // unref：退出路径上不能因为这个计时器本身把事件循环钉住
+    timer.unref()
+    void exited.then(() => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
 }
 
 function sleep(ms: number): Promise<void> {
