@@ -201,7 +201,9 @@ CI 还会校验 `.deb` 控制信息、`out/latest-linux.yml`，并用 `scripts/s
 
 `.desktop` 的**文件名**、其中的 `StartupWMClass`、以及运行时 Electron 的 `app_id` / X11 `WM_CLASS` 必须是同一个值，否则 X11 会话把窗口关联不到启动器条目（任务栏出现重复或无关联图标）——而 Wayland 走 `app_id`，看不出任何问题，所以这个错很容易漏到发版。
 
-`package.json` 的 `desktopName` 是唯一真源（Electron 启动时读取），`electron-builder.yml` 打开 `linux.syncDesktopName` 让它据此派生 `.desktop` 文件名。缺 `desktopName` 时 electron-builder 会把 `StartupWMClass` **静默回退成 `productName`**，配置里看不出来，所以 `verify-deb.mjs` 会从产物里把 `.desktop` 读回来验。
+`package.json` 的 `desktopName`（`com.dsh.desktop.desktop`，与 `appId` 同源）是唯一真源，Electron 启动时读取它作为 `app_id` / `WM_CLASS`；`electron-builder.yml` 打开 `linux.syncDesktopName` 让它据此派生 `.desktop` 文件名。缺 `desktopName` 时 electron-builder 会把 `StartupWMClass` **静默回退成 `productName`**，配置里看不出来，所以 `verify-deb.mjs` 会从产物里把 `.desktop` 读回来验。
+
+取 reverse-DNS 形式不只是命名规范：Electron 文档要求该值是 reverse-DNS 风格 ID，且 `xdg-desktop-portal` 1.21+ 会拒绝解析不到已安装 `.desktop` 文件的 `app_id`（GNOME 50 起会因此静默拒绝 `globalShortcut` 绑定）。这使 `.desktop` 文件名从早期的 `dsh-desktop.desktop` 变为 `com.dsh.desktop.desktop`，在此之前把应用固定到启动器/任务栏的用户需要重新固定一次。图标不受影响：`.desktop` 里的 `Icon=` 用的是可执行文件名（`dsh-desktop`），与文件名无关。
 
 不要改用 `app.setDesktopName()` 在运行时补：该 API 要求「必须在 `ready` 事件之前调用」，而主进程的初始化都在 `whenReady()` 回调里，在那里调用是无效的。这个契约跨 `package.json`、`electron-builder.yml`、`electron/main.ts` 与 `verify-deb.mjs` 四处，`scripts/__tests__/desktop-identity.test.ts` 在本地（无需 Linux 与已构建的 `.deb`）就能把它钉住。
 

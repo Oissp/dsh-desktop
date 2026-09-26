@@ -8,7 +8,7 @@
   "license": "MIT",
   "homepage": "https://github.com/Oissp/dsh-desktop",
   "private": true,
-  "desktopName": "dsh-desktop.desktop",
+  "desktopName": "com.dsh.desktop.desktop",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
     "dev": "concurrently -k -n renderer,electron -c cyan,magenta \"pnpm dev:renderer\" \"pnpm dev:electron\"",

@@ -52,12 +52,17 @@ describe('构建侧派生 .desktop 文件名与 StartupWMClass', () => {
     expect(builder.linux?.syncDesktopName).toBe(true)
   })
 
-  it('appId 与 desktopName 同属桌面身份体系，不应互相矛盾', () => {
-    // appId 给 deb 包元数据，desktopName 给窗口/启动器关联。二者值不同是允许的
-    // （appId 用 reverse-DNS，desktopName 历史上是 dsh-desktop.desktop），
-    // 但至少都要有 —— 缺一个就是又回到"靠回退"的状态。
-    expect(typeof builder.appId).toBe('string')
-    expect(builder.appId).not.toBe('')
+  it('desktopName 的身份段与 appId 同源（同一套 reverse-DNS 身份）', () => {
+    // 两个值分别喂给 deb 包元数据与窗口/启动器关联，但指向同一个应用身份。
+    // reverse-DNS 不是审美偏好：Electron 文档明确该值「should be a reverse-DNS style ID
+    // such as com.example.MyApp」，且 xdg-desktop-portal 1.21+ 会拒绝解析不到已安装
+    // .desktop 文件的 app ID；GNOME 50 起还会因此静默拒绝 globalShortcut 绑定。
+    // 两者不同不会有任何编译或测试报错，只在 X11 / 门户行为上出偏差，所以在这里钉住。
+    expect(pkg.desktopName?.replace(/\.desktop$/, '')).toBe(builder.appId)
+  })
+
+  it('desktopName 是 reverse-DNS 形式（不是裸可执行名）', () => {
+    expect(pkg.desktopName?.replace(/\.desktop$/, '')).toMatch(/^[a-z0-9]+(?:\.[a-z0-9-]+)+$/)
   })
 })
 
