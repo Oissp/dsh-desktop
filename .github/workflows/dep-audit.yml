@@ -1,0 +1,61 @@
+name: Dependency audit
+
+# 出厂依赖闭包的漏洞闸门 —— 补 Dependabot 够不到的那块。
+#
+# 为什么需要它：Dependabot 覆盖不到 @deepseek-ai/dsh 闭包内的传递依赖。它的
+# 安全更新是「抬高一个显式声明的依赖、把修复带上来」，而这条链路上唯一的显式
+# 依赖正是在 dependabot.yml 里 ignore 掉的 @deepseek-ai/dsh（该文件已注明
+# ignore 对安全更新同样生效），另一个 electron-builder 已是最新。实测后果：
+# 2026-09-21 起的 21 条告警挂了 5 天、零安全 PR，而同期 Dependabot 开了
+# 11 个版本更新 PR —— 它们是**静默**挂着的。这条闸门就是把静默变响。
+#
+# --prod 是这条闸门的关键：只审 dependencies / optionalDependencies，即真正
+# 随 .deb 出厂的那个闭包。dev-only 的传递依赖（如 electron-builder → plist →
+# @xmldom/xmldom，被 after-pack 的 dev 闭包排除挡在产物之外）不会在这里报警，
+# 那属于 Dependabot 该管的范围，不该混进来制造噪声。
+#
+# 刻意不指定 --audit-level：默认任何级别都算。GHSA 的 severity 标签会低估 ——
+# fflate 那条标 moderate 而 CVSS 是 7.5（畸形 ZIP64 → unzipSync 死循环），
+# 按 high 过滤会正好漏掉它。
+#
+# 只读锁文件、不装依赖：实测 pnpm audit 无需 node_modules（几秒完成），所以
+# 这里不复制 ci.yml 的 install / store 缓存那套。
+on:
+  schedule:
+    # 每周一 UTC 07:00（北京 15:00）。刻意选周频而非日频：问题从来不是"没及时
+    # 发现"，而是"没人知道"，一周一次的提醒足以避免遗忘，又不会因为某条上游
+    # 暂时修不了的告警天天飘红、把人训练成无视它。
+    # 错开 sync-dsh（每日 06:00 UTC）与 Dependabot 的每周一 09:00 北京。
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+  # 按路径收窄：审计结果只随这两个文件变，没必要每个 push 都跑。
+  push:
+    paths:
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  pull_request:
+    paths:
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+
+concurrency:
+  group: dep-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prod-audit:
+    name: Audit shipped dependency closure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      # 失败时输出里已含 包名 / 受影响版本区间 / 修复版 / 完整依赖路径，可直接照着
+      # 加 override。修法与成因见 pnpm-workspace.yaml 的 overrides 注释。
+      - name: Audit production dependencies
+        run: pnpm audit --prod

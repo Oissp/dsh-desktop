@@ -10,6 +10,13 @@
 #      自动升依赖 + patch-bump 应用版本号 + 提交 + 发版。见下方 ignore。
 #   2. 安全更新 —— 仓库级开关，命中 GHSA 告警时自动开 PR。
 #   3. 常规版本更新 —— 本文件，每周一检查一次。
+#
+# 但路径 2 有个它自己补不上的缺口：**@deepseek-ai/dsh 闭包内的传递依赖**。
+# Dependabot 的安全更新是「抬高一个显式声明的依赖、把修复带上来」，而这条链路上
+# 唯一的显式依赖正是下面 ignore 掉的 dsh（ignore 对安全更新同样生效），报告出来的
+# 告警会一直挂着、不会有 PR。2026-09 实测：21 条告警挂了 5 天、零安全 PR。
+# 那条路径由 .github/workflows/dep-audit.yml 补（每周 `pnpm audit --prod`，
+# 只审会随 .deb 出厂的闭包），修复手段是 pnpm-workspace.yaml 的 overrides。
 version: 2
 
 updates:
