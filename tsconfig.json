@@ -1,8 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    // 渲染进程只跑在 Electron 内置的 Chromium 152 里（同 package.json 钉死的
+    // Electron 44.4.5），没有浏览器兼容矩阵，故 lib 取 ES2024。
+    // 这里的 target 只影响类型检查：Vite 走 esbuild，按 build.target 的
+    // baseline 基线（chrome111）自行降级，不读 tsconfig 的 target。
+    "target": "ES2024",
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "skipLibCheck": true,

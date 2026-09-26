@@ -433,13 +433,15 @@ app.whenReady().then(async () => {
   const creds = createCredentialStore(userDataDir())
 
   setupMenu()
-  // Wayland 下 Electron 会自行推断 XDG app id，推断值通常与安装的 .desktop 文件名
-  // 不一致，导致 dock/任务栏图标对不上（PR #304 实践）。.desktop 文件名由
-  // electron-builder 按 package.json 的 name（dsh-desktop）派生为
-  // dsh-desktop.desktop（与 productName "DSH Desktop" 无关），这里显式对齐。
-  if (process.platform === 'linux') {
-    app.setDesktopName('dsh-desktop.desktop')
-  }
+  // Linux 的 app_id / WM_CLASS 来自 package.json 的 `desktopName`
+  // （= dsh-desktop.desktop，Electron 启动时即读取），**不能**在这里调
+  // app.setDesktopName —— 该 API 文档要求"必须在 ready 事件之前调用"，放到
+  // whenReady 里已经太晚。原先这里就是这么写的，之所以一直看着没问题，是因为
+  // Electron 在 desktopName 缺失时会回退成应用名的小写连字符 slug，
+  // 恰好也是 dsh-desktop.desktop。现在值显式写在 package.json 里，构建侧
+  // （electron-builder 的 linux.syncDesktopName）据此派生 .desktop 文件名与
+  // StartupWMClass，三处标识（app_id / StartupWMClass / 文件名）由此对齐。
+  // 见 electron-builder.yml 的 syncDesktopName 注释与 scripts/verify-deb.mjs 的断言。
   // utility/GPU 等子进程异常退出落盘
   installChildProcessGoneLogging(app)
   logger.info(`[boot] DSH Desktop 启动，版本 ${app.getVersion()}，日志目录 ${LOG_DIR}`)

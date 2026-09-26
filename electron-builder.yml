@@ -53,6 +53,18 @@ linux:
         - x64
   maintainer: Oissp <19642615+Oissp@users.noreply.github.com>
 
+  # desktopName（package.json）对齐三处标识，缺一不可：
+  #   · 运行时 app_id / X11 WM_CLASS —— Electron 启动时读 package.json 的 desktopName
+  #     （等价于 app.setDesktopName，但那个 API 必须在 ready 之前调用，见 main.ts 注释）
+  #   · .desktop 里的 StartupWMClass —— electron-builder 取 desktopName（去 .desktop 后缀），
+  #     **缺 desktopName 时回退成 productName**（LinuxTargetHelper.js:259），
+  #     于是写出 StartupWMClass=DSH Desktop，与运行时的 dsh-desktop 对不上
+  #   · .desktop 文件名 —— syncDesktopName 才按 desktopName 派生，否则用 executableName
+  # 前两者不一致时，X11 会话下窗口关联不到启动器条目（任务栏出重复/无关联图标）；
+  # Wayland 走 app_id 看不出问题，所以这个错很容易漏到发版。
+  # syncDesktopName 派生的文件名（dsh-desktop）与原来的 executableName 一致，文件名不变。
+  syncDesktopName: true
+
 # deb 压缩：保持默认 xz（fpm 1.9.3 只支持 gz|bzip2|xz）。实测 623MB 原始数据，
 # xz -3 在三个支持的压缩里体积最小（~138MB）且最快（CI ~2min）；gzip -9 更慢更大
 # （~185MB）、bzip2 -9 也更慢更大（~158MB）。故不做覆盖，不要为此加 deb 配置。

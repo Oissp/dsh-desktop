@@ -11,7 +11,7 @@
  *
  * 用法：node scripts/verify-deb.mjs [out/xxx.deb]（缺省则取 out/*.deb 第一个）
  */
-import { openSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
+import { openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
@@ -37,6 +37,23 @@ const warn = (msg) => {
   warnings++
 }
 const ok = (msg) => console.log(`  ✓ ${msg}`)
+
+/**
+ * 读出 .deb 里单个文件的文本内容（失败返回 null）。
+ *
+ * 用管道而不是 `dpkg-deb -x` 全量解包：这个包解开后 600MB+，只为读一个几百字节的
+ * .desktop 不值当，也白占 CI 的磁盘与时间。deb 路径与成员名都作为位置参数传给
+ * sh（不拼进命令串），所以路径里带空格或引号都不会被当成 shell 语法。
+ */
+function readDebFile(debPath, member) {
+  const res = spawnSync(
+    'sh',
+    ['-c', 'dpkg-deb --fsys-tarfile "$1" | tar -xOf - "$2"', 'sh', debPath, member],
+    { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+  )
+  if (res.status !== 0 || typeof res.stdout !== 'string' || res.stdout === '') return null
+  return res.stdout
+}
 
 console.log(`\n[verify-deb] 校验 ${deb}（${(statSync(deb).size / 1024 / 1024).toFixed(1)} MB）`)
 
@@ -161,8 +178,45 @@ for (const assertion of KEEP_ASSERTIONS) {
 }
 
 console.log('\n[verify-deb] 桌面集成（.desktop + hicolor 图标）')
-// .desktop 文件应在 /usr/share/applications/<executableName>.desktop
+// .desktop 文件应在 /usr/share/applications/ 下
 const desktopFiles = entries.filter((p) => p.startsWith('./usr/share/applications/') && p.endsWith('.desktop'))
+// .desktop 的**文件名**与其中的 StartupWMClass 都必须等于 package.json 的
+// desktopName（去掉 .desktop 后缀），因为同一个值也是 Electron 的 app_id / X11
+// WM_CLASS。三者不一致时 X11 会话关联不到启动器条目（任务栏重复/无关联图标），
+// Wayland 走 app_id 却看不出问题——所以要在这里从**产物**里读回来验，而不是只看
+// 配置文件：StartupWMClass 的回退（缺 desktopName 时取 productName）是
+// electron-builder 的行为，配置里看不出来。
+const pkgMeta = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+const rawDesktopName = typeof pkgMeta.desktopName === 'string' ? pkgMeta.desktopName.trim() : ''
+// Electron 与 electron-builder 都会把结尾的 .desktop 去掉，比较时统一
+const identity = rawDesktopName.replace(/\.desktop$/, '')
+if (identity === '') {
+  fail('package.json 缺 desktopName——app_id / StartupWMClass 无法对齐，X11 下窗口关联不到启动器条目')
+} else {
+  const expected = `./usr/share/applications/${identity}.desktop`
+  if (entries.includes(expected)) {
+    ok(`.desktop 文件名与 desktopName 一致：${expected.slice(2)}`)
+  } else {
+    const found = desktopFiles.length > 0 ? desktopFiles[0].slice(2) : '（无）'
+    fail(`.desktop 文件名应为 ${expected.slice(2)}，实际 ${found}——linux.syncDesktopName 未生效或 desktopName 不一致`)
+  }
+  const entry = readDebFile(deb, expected)
+  if (entry === null) {
+    warn(`未能从 .deb 读出 ${expected.slice(2)}，跳过 StartupWMClass 校验（不影响安装）`)
+  } else {
+    const line = entry.split('\n').find((l) => l.startsWith('StartupWMClass='))
+    const actual = line === undefined ? null : line.slice('StartupWMClass='.length).trim()
+    if (actual === identity) {
+      ok(`StartupWMClass 与运行时 app_id 一致：${identity}`)
+    } else {
+      fail(
+        `StartupWMClass=${actual ?? '（无该字段）'}，应为 ${identity}`
+        + '——缺 desktopName 时 electron-builder 会回退成 productName，X11 下窗口关联不到启动器条目',
+      )
+    }
+  }
+}
+// .desktop 文件应在 /usr/share/applications/ 下（文件名是否正确见上面的身份断言）
 if (desktopFiles.length > 0) {
   ok(`.desktop 文件存在：${desktopFiles[0].slice(2)}`)
 } else {
