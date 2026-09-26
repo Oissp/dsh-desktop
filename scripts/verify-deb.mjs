@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { NATIVE_MODULE_FAMILIES } from './lib/native-modules.mjs'
 import { nodeBinaryRelPath } from './lib/node-runtime.mjs'
+import { TRIM_RULES, KEEP_ASSERTIONS } from './lib/deb-trim-rules.mjs'
 
 const deb = process.argv[2]
   ?? readdirSync('out').map((f) => `out/${f}`).filter((f) => f.endsWith('.deb')).sort()[0]
@@ -142,14 +143,7 @@ console.log('\n[verify-deb] 产物裁剪（包内构建产物不应进包）')
 // 启动，但纯属死重（实测 node-pty 跨平台 prebuild ~23 MB、domino test/ ~7 MB、
 // 类型声明 ~11 MB）。此处做回归校验：一旦裁剪逻辑失效（例如 filter 改回只判包根），
 // 体积会悄悄涨回去、而功能测试全绿，所以必须在这里显式失败。
-const trimRules = [
-  { label: 'TypeScript 声明（*.d.ts / *.d.ts.map）', re: /\.d\.[cm]?ts(\.map)?$/, hint: 'shouldExcludeWithinPackage 未生效' },
-  { label: 'TypeScript 构建缓存（*.tsbuildinfo）', re: /\.tsbuildinfo$/, hint: 'shouldExcludeWithinPackage 未生效' },
-  { label: 'Windows 调试符号（*.pdb）', re: /\.pdb$/, hint: 'shouldExcludeWithinPackage 未生效' },
-  { label: 'node-pty 非目标平台 prebuild', re: /\/node-pty\/prebuilds\/(?!linux-x64\/)/, hint: 'node-pty 平台段判断失效' },
-  { label: 'domino 测试夹具', re: /\/@mixmark-io\/domino\/test\//, hint: 'domino 排除规则失效' },
-]
-for (const rule of trimRules) {
+for (const rule of TRIM_RULES) {
   const hits = entries.filter((p) => rule.re.test(p))
   if (hits.length === 0) {
     ok(`已裁剪：${rule.label}`)
@@ -157,11 +151,13 @@ for (const rule of trimRules) {
     fail(`未裁剪：${rule.label}（${hits.length} 项，如 ${hits[0].slice(2)}）——${rule.hint}`)
   }
 }
-// 反向断言：裁剪绝不能误伤目标平台的 node-pty 二进制（终端 PTY 功能依赖它）
-if (has((p) => p.includes('/node-pty/prebuilds/linux-x64/pty.node'))) {
-  ok('node-pty 目标平台 prebuild 保留（linux-x64/pty.node）')
-} else {
-  fail('缺 node-pty/prebuilds/linux-x64/pty.node——裁剪误伤目标平台 prebuild，终端功能将崩')
+// 反向断言：裁剪绝不能误伤真正需要的东西（终端 PTY 功能依赖 pty.node）
+for (const assertion of KEEP_ASSERTIONS) {
+  if (has((p) => p.includes(assertion.includes))) {
+    ok(`保留：${assertion.label}`)
+  } else {
+    fail(assertion.hint)
+  }
 }
 
 console.log('\n[verify-deb] 桌面集成（.desktop + hicolor 图标）')
