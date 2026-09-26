@@ -18,6 +18,13 @@ name: Release (Debian)
 # 单一发布目标：Debian 13 / amd64。苹果平台构建通道已于 2026-09 移除。
 #
 # 幂等：若 v<version> release 已存在则跳过，避免重复发版。
+#
+# 出厂依赖闭包审计：build job 在装依赖之前跑 `pnpm audit --prod`，有漏洞即阻断发版。
+# 审的是 dsh 同步之后的 lockfile，也就是真正会被打进 .deb 的那份闭包，不是 main
+# 上的旧闭包。只在「已知漏洞未修就出厂」时拦——registry 不可达时 pnpm audit 同样
+# 退出 1（fail-closed），那种情况报错是 fetch failed 而不是漏洞列表，别误判成闸门
+# 坏了去改 overrides。紧急放行走 dispatch 的 skip_audit。本文件与
+# .github/workflows/dep-audit.yml 是同一条命令的两个时点（那里巡检、这里把关）。
 
 on:
   schedule:
@@ -35,6 +42,11 @@ on:
         type: string
       force:
         description: '强制重建当前版本（即使 v<version> release 已存在）'
+        required: false
+        type: boolean
+        default: false
+      skip_audit:
+        description: '跳过出厂依赖闭包审计（仅在确认漏洞可接受时使用）'
         required: false
         type: boolean
         default: false
@@ -321,6 +333,29 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.21.0 --activate
           pnpm --version
+
+      # 出厂依赖闭包的漏洞闸门。放在装依赖之前：pnpm audit 只读 pnpm-lock.yaml、
+      # 不需要 node_modules（实测几秒完成），能在花掉十几分钟 install/build 之前拦下。
+      # 位置必须在 "Apply bumped source" 之后——dsh 同步会换掉 lockfile，要审的是
+      # 真正会被打进 .deb 的那份闭包，而不是 main 上的旧闭包。
+      # --prod 只审 dependencies/optionalDependencies（即随 .deb 出厂的），dev-only
+      # 的传递依赖不在这里报警（那属于 Dependabot 的范围，且被 after-pack 挡在产物外）。
+      # 刻意不加 --audit-level：GHSA 的 severity 标签会低估（fflate 标 moderate 而 CVSS
+      # 7.5），按 high 过滤正好会漏掉它。
+      # 修法与成因见 pnpm-workspace.yaml 的 overrides 注释；定期巡检见 dep-audit.yml。
+      # 放行判断在 shell 里做（与本文件读 force 的方式一致）：schedule/push 触发时
+      # inputs 为空，插值成空串，自然走审计分支。
+      - name: Audit shipped dependency closure
+        env:
+          SKIP_AUDIT: ${{ inputs.skip_audit }}
+        run: |
+          if [ "$SKIP_AUDIT" = "true" ]; then
+            echo "::warning::已跳过出厂依赖闭包审计（skip_audit=true）。"
+            echo "::warning::该审计拦的是「已知漏洞未修就出厂」，跳过即表示接受该风险。"
+            echo "::warning::请在 release 说明里记录放行理由与涉及的告警编号，便于日后回溯。"
+            exit 0
+          fi
+          pnpm audit --prod
 
       - name: Resolve pnpm store path
         id: pnpm-store

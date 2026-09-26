@@ -20,6 +20,13 @@ name: Dependency audit
 #
 # 只读锁文件、不装依赖：实测 pnpm audit 无需 node_modules（几秒完成），所以
 # 这里不复制 ci.yml 的 install / store 缓存那套。
+#
+# 本文件是**巡检**：定时 + 改锁文件时报警，不依赖任何发版动作。发版链路上另有一道
+# 同命令的强制闸门（build-release.yml 的 build job，装依赖之前跑 `pnpm audit --prod`，
+# 失败即阻断发版，紧急放行走 dispatch 的 skip_audit）。改这里的命令时两处要一起改。
+#
+# registry 不可达时 pnpm audit 退出码同样是 1（fail-closed），报错为 fetch failed
+# 而非漏洞列表——那种红是网络问题，别据此去加 overrides。
 on:
   schedule:
     # 每周一 UTC 07:00（北京 15:00）。刻意选周频而非日频：问题从来不是"没及时
