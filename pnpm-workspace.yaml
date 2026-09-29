@@ -33,7 +33,9 @@ minimumReleaseAge: 0
 # 每条都落在父包**声明的区间内**（fast-uri/js-yaml/qs/hono/xmldom 五条），
 # 即「一次崭新的 pnpm install 本来就会选到的版本」，没有逆着上游改行为。
 overrides:
-  fast-uri: 3.1.6 # ajv ^3.0.1；SSRF / host confusion（4 条 high）
+  fast-uri: 3.1.8 # ajv ^3.0.1；SSRF / host confusion（替换旧钉 3.1.6——3.1.6 自身现
+  # 也入告警：authority injection via unvalidated port、bracket host confusion）
+  ip-address: 10.5.1 # isLinkLocal 前缀过宽 / NAT64 分类缺失（2 条 moderate，SSRF 判定)
   js-yaml: 4.3.2 # cordis-plugin-include ^4.1.0；空 merge 源把 CPU 打满（high）
   qs: 6.16.0 # express ^6.14.0 / body-parser ^6.15.2；DoS
   hono: 4.13.5 # @hono/node-server peer ^4；查询串 / parseBody
