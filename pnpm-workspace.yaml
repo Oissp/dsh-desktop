@@ -35,11 +35,25 @@ minimumReleaseAge: 0
 overrides:
   fast-uri: 3.1.8 # ajv ^3.0.1；SSRF / host confusion（替换旧钉 3.1.6——3.1.6 自身现
   # 也入告警：authority injection via unvalidated port、bracket host confusion）
-  ip-address: 10.5.1 # isLinkLocal 前缀过宽 / NAT64 分类缺失（2 条 moderate，SSRF 判定)
+  ip-address: 10.7.3 # express-rate-limit ^10.2.0；isLinkLocal 前缀过宽 / NAT64 分类缺失
+  # （替换旧钉 10.5.1——10.5.1 自身现也入告警 <=10.7.0：isInSubnet/isHostInSubnet 跨地址族
+  # 比较让白名单放进区间外地址、Address6 诊断串长度无上限可被超长输入拖死）
   js-yaml: 4.3.2 # cordis-plugin-include ^4.1.0；空 merge 源把 CPU 打满（high）
   qs: 6.16.0 # express ^6.14.0 / body-parser ^6.15.2；DoS
-  hono: 4.13.5 # @hono/node-server peer ^4；查询串 / parseBody
+  hono: 4.13.12 # @hono/node-server peer ^4 / mcp sdk ^4.11.4；查询串 / parseBody，现为
+  # jsx 边界组件不转义字符串（XSS，<4.13.7）；旧钉 4.13.5 已入告警区间
   '@xmldom/xmldom': 0.9.12 # plist 3.1.1 声明 ^0.9.10，正好收得下（9 条告警的来源）
+  # ↓ 以下四条是 dev / 构建期闭包（不进 .deb），Dependabot 的安全更新同样开不出 PR
+  # ——父包（wait-on / app-builder-lib）都已是各自最新，抬不动；到期不修同样会一直挂告警：
+  axios: 1.20.0 # wait-on ^1.18.1；10 条告警（4 high：HTTP/2 适配器绕过 DNS/proxy、
+  # toFormData 原型污染、继承 createConnection 劫持 socket、fetch 适配器不守 maxRedirects）
+  # ↓ brace-expansion 三份副本各自按条目声明区间钉住（`{a},b}` 重写二次方复杂度，medium；
+  # 1.x/2.x 另有 2 条 high：GHSA-6j4f-fj2g-mc7p、GHSA-qhr7-859c-m2p7，均为构建期闭包）。
+  # 用 `包@主版本` 选择器逐个钉，不能写成全局 `brace-expansion: <v>`——那会把
+  # minimatch 3.1.5 的 ^1.1.7、5.1.9/9.0.9 的 ^2.0.1、10.2.6 的 ^5 全顶到同一个主版本。
+  'brace-expansion@1': 1.1.21 # minimatch 3.1.5 声明 ^1.1.7
+  'brace-expansion@2': 2.1.7 # minimatch 5.1.9 / 9.0.9 声明 ^2.0.1
+  'brace-expansion@5': 5.0.12 # minimatch 10.2.6 声明 ^5
   # ↓ 这两条父包是**精确 pin**，override 是唯一的杠杆，也是仅有两处背离声明区间的改动：
   fflate: 0.8.3 # @deepseek-ai/libreoffice-kit 精确锁 0.8.2，且上游最新的 0.1.2
   # 仍锁 0.8.2（畸形 ZIP64 → unzipSync 死循环）。顺带把 dsh-session-log-export

@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    // 运行时下限：Electron 44.4.5 内置 Node 24.21.0（V8 15.2），引擎子进程用的捆绑
+    // 运行时下限：Electron 44.5.1 内置 Node 24.21.0（V8 15.2），引擎子进程用的捆绑
     // Node 也是 24.21.0——两者都由 package.json / node-runtime.mjs 钉死，没有用户
     // 环境矩阵，所以 target 与 lib 取 ES2024 是准确的而不是乐观的。
     // 注意 typescript 5.9 的 lib 只到 es2024（没有 es2025），ES2024 即上限。

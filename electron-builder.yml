@@ -26,7 +26,7 @@ asar: false
 
 npmRebuild: false
 
-# Electron 版本跟随 devDependencies（现为 44.4.5）。
+# Electron 版本跟随 devDependencies（现为 44.5.1）。
 # 历史：42.9.3 曾钉死仅供 Linux（PR #304 实践），因 Electron 43.x 在 GNOME
 # 下托盘 SNI 回归（43.4.0 IconPixmap Get 报错 / 43.4.1 注册被拒，上游 #52674/
 # #53138/#53213）；43.5.0 与 44.1.0 起已修复，故撤掉 pin 恢复跟随。
