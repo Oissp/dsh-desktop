@@ -30,8 +30,8 @@ minimumReleaseAge: 0
 # 所以 21 条告警挂了 5 天、零 PR。`pnpm update <包名>` 也不可靠：实测只挪动了
 # sharp 与一半 js-yaml。要确定性就只能在这里钉解析结果。
 #
-# 每条都落在父包**声明的区间内**（fast-uri/js-yaml/qs/hono/xmldom 五条），
-# 即「一次崭新的 pnpm install 本来就会选到的版本」，没有逆着上游改行为。
+# 每条都落在父包**声明的区间内**（除末尾注明「背离声明区间」的 fflate / plist 两条外，
+# 其余全部如此），即「一次崭新的 pnpm install 本来就会选到的版本」，没有逆着上游改行为。
 overrides:
   fast-uri: 3.1.8 # ajv ^3.0.1；SSRF / host confusion（替换旧钉 3.1.6——3.1.6 自身现
   # 也入告警：authority injection via unvalidated port、bracket host confusion）
