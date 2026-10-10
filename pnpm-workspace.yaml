@@ -61,3 +61,9 @@ overrides:
   plist: 3.1.1 # app-builder-lib 精确锁 3.1.0，而 3.1.0 声明 xmldom ^0.8.0
   # ——会把 xmldom 拖回不安全的 0.8.x；3.1.1 声明 ^0.9.10，才能与上面的
   # 0.9.12 对齐（顺带把两份 plist 合并成一份）。仅在构建期解析自家 plist。
+  # ↓ dsh 0.2.1-alpha.2 闭包引入的四条安全告警，父包声明区间均收得下：
+  proxy-addr: 2.0.8 # express 5.2.1 声明 ^2.0.7；IPv4-mapped 地址 IP 欺骗（critical）
+  http-cache-semantics: 4.3.0 # cacheable-request 7/13 声明 ^4.2.0；max-stale 信息泄露（high）
+  compression: 1.8.2 # dsh-host-webserver 0.2.1-alpha.2 声明 ^1.8.1；内存 DoS（high）
+  '@modelcontextprotocol/sdk': 1.32.1 # @google/genai / pi-ai 声明 ^1.25.2；OAuth 客户端
+  # 向 MCP server 指定的授权服务器泄露凭据（high）。1.31.0 起修复，取区间内最新 1.32.1。
