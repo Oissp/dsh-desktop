@@ -6,7 +6,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 功能
 
-- 内置 `@deepseek-ai/dsh`（0.2.1-alpha.1），首次初始化后即可使用；界面是官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
+- 内置 `@deepseek-ai/dsh`（0.2.1-alpha.2），首次初始化后即可使用；界面是官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
 - 首启向导配置工作区与模型凭证；引擎崩溃进入恢复模式，可回滚配置快照重启
 - 凭证经 Electron `safeStorage` 加密保存；启用 CSP、导航限制与单实例锁
 - 稳定性：崩溃环检测 + 配置快照回滚、托盘常驻、日志落盘
