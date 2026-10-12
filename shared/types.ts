@@ -141,6 +141,72 @@ export type SessionStreamEvent =
   | { kind: 'title'; sessionId: string; seq: number; title: string }
   | { kind: 'projection'; sessionId: string; seq: number; key: string; value: unknown }
   | { kind: 'running'; sessionId: string; running: boolean }
+  | {
+      /** 步骤结束（DSH 0.2.1+ 事件 step/end）。 */
+      kind: 'step-end'
+      sessionId: string
+      seq: number
+      turn: number
+      step: number
+    }
+  | {
+      /**
+       * 系统消息（DSH 0.2.1+ 事件 system/message）：引擎注入的上下文消息，
+       * 与 user/message（source.kind=user）不同，不影响 running 状态。
+       */
+      kind: 'system-message'
+      sessionId: string
+      seq: number
+      time?: number
+      message: { id: string; blocks: MessageBlock[] }
+    }
+  | {
+      /**
+       * 开发者消息（DSH 0.2.1+ 事件 developer/message）：开发者注入的消息，
+       * 归档历史可见，保留上下文。
+       */
+      kind: 'developer-message'
+      sessionId: string
+      seq: number
+      time?: number
+      message: { id: string; blocks: MessageBlock[] }
+    }
+  | {
+      /**
+       * 上下文压缩摘要（DSH 0.2.1+ 事件 compaction/summary）：
+       * 引擎压缩上下文后发出的摘要，归档历史可见。
+       */
+      kind: 'compaction-summary'
+      sessionId: string
+      seq: number
+      summary: string
+    }
+  | {
+      /**
+       * 子代理活动（DSH 0.2.1+ 事件 subagent/start、subagent/end）：
+       * 子代理生命周期，归档历史可见。
+       */
+      kind: 'subagent-activity'
+      sessionId: string
+      seq: number
+      /** 'start' | 'end' */
+      phase: string
+      /** 子代理名称或 id（可选）。 */
+      name?: string
+    }
+  | {
+      /**
+       * 命令执行（DSH 0.2.1+ 事件 command/run、command/done）：
+       * 斜杠命令的执行记录，归档历史可见。
+       */
+      kind: 'command'
+      sessionId: string
+      seq: number
+      /** 'run' | 'done' */
+      phase: string
+      /** 命令名称（可选）。 */
+      name?: string
+    }
 
 /** IPC 请求结果封装。 */
 export interface IpcResult<T> {

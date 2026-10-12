@@ -93,6 +93,32 @@ export function normalizeSessionEvent(
       })
       break
     }
+    case 'system/message': {
+      // 引擎注入的系统消息（DSH 0.2.1+）：保留在归档历史中，提供上下文。
+      // 与 user/message 的 plugin 源不同——system/message 是独立事件类型，
+      // 不是 user/message 的子源，不需要过滤。
+      const id = typeof data.id === 'string' ? data.id : `sys${seq}`
+      out.push({
+        kind: 'system-message',
+        sessionId,
+        seq,
+        time: evt.time === undefined ? undefined : Number(evt.time),
+        message: { id, blocks: asMessageBlocks(data.content as unknown[]) },
+      })
+      break
+    }
+    case 'developer/message': {
+      // 开发者注入的消息（DSH 0.2.1+）：归档历史可见，保留上下文。
+      const id = typeof data.id === 'string' ? data.id : `dev${seq}`
+      out.push({
+        kind: 'developer-message',
+        sessionId,
+        seq,
+        time: evt.time === undefined ? undefined : Number(evt.time),
+        message: { id, blocks: asMessageBlocks(data.content as unknown[]) },
+      })
+      break
+    }
     case 'turn/start': {
       out.push({
         kind: 'assistant-start',
@@ -107,6 +133,19 @@ export function normalizeSessionEvent(
     case 'step/start': {
       out.push({
         kind: 'assistant-start',
+        sessionId,
+        seq,
+        turn: Number(data.turn ?? 1),
+        step: Number(data.step ?? 1),
+      })
+      break
+    }
+    case 'step/end': {
+      // 步骤结束（DSH 0.2.1+）：与 step/start 对称，标记单个步骤的边界。
+      // 与 turn/end 不同——turn/end 推送 running:false（回合级转圈停止），
+      // step/end 只标记步骤级边界，不改变 running 状态（一个回合可能含多个步骤）。
+      out.push({
+        kind: 'step-end',
         sessionId,
         seq,
         turn: Number(data.turn ?? 1),
@@ -197,6 +236,36 @@ export function normalizeSessionEvent(
       out.push({ kind: 'title', sessionId, seq, title })
       break
     }
+    case 'compaction/summary': {
+      // 上下文压缩摘要（DSH 0.2.1+）：引擎压缩上下文后的摘要文本。
+      // 只处理 summary 子事件——compaction/start、compaction/end、compaction/prune
+      // 是过程明细帧，归档历史回放时无消费价值（压缩结果已在 summary 中）。
+      const summary = typeof data.summary === 'string' ? data.summary : ''
+      if (summary) {
+        out.push({ kind: 'compaction-summary', sessionId, seq, summary })
+      }
+      break
+    }
+    case 'subagent/start':
+    case 'subagent/end': {
+      // 子代理生命周期（DSH 0.2.1+）：start/end 标记子代理的启动与结束。
+      const phase = evt.type === 'subagent/start' ? 'start' : 'end'
+      const name = typeof (data.name ?? data.subagentId) === 'string'
+        ? String(data.name ?? data.subagentId)
+        : undefined
+      out.push({ kind: 'subagent-activity', sessionId, seq, phase, name })
+      break
+    }
+    case 'command/run':
+    case 'command/done': {
+      // 斜杠命令执行（DSH 0.2.1+）：run 标记命令开始，done 标记完成。
+      const phase = evt.type === 'command/run' ? 'run' : 'done'
+      const name = typeof data.command === 'string' ? data.command
+        : typeof data.name === 'string' ? data.name
+        : undefined
+      out.push({ kind: 'command', sessionId, seq, phase, name })
+      break
+    }
     default:
       break
   }
@@ -227,6 +296,20 @@ export function normalizeHistory(events: unknown[]): SessionStreamEvent[] {
     // 但 finish/error 子帧与 turn/step 不完全对齐时覆盖落空，留下重复流式条目）。
     // 实时流仍需 chunk（流式输出），历史回放只用完整消息。
     if (typeof event === 'object' && event !== null && (event as { type?: string }).type === 'assistant/chunk') {
+      continue
+    }
+    // 跳过压缩过程明细帧（compaction/start、compaction/prune、compaction/end）：
+    // 历史快照含完整的 compaction/summary，过程帧无独立消费价值。
+    // compaction/summary 本身保留（它是结果，不是增量）。
+    if (
+      typeof event === 'object' &&
+      event !== null &&
+      [
+        'compaction/start',
+        'compaction/prune',
+        'compaction/end',
+      ].includes((event as { type?: string }).type ?? '')
+    ) {
       continue
     }
     out.push(...normalizeSessionEvent(sessionId, event as DshEvent))

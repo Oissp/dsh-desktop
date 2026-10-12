@@ -95,7 +95,7 @@ dsh 的依赖闭包不能交给 electron-builder 默认的依赖收集：pnpm �
 
 - `@deepseek-ai/*` 及其运行时依赖闭包、dsh Web profile 初始化所需文件
 - 原生模块（N-API prebuild）：`node-pty`、`koffi`、`@deepseek-ai/node-addon-system-linux-x64`（0.1.5 起取代 fs-ext）
-- 捆绑 Node 运行时（`resources/bin/node`）：dsh 0.1.6-alpha.2 起 `node-addon-require-builtin` 在 `ELECTRON_RUN_AS_NODE` 模式下拿不到 V8 embedder context，引擎必须由一份独立 Node 二进制启动
+- 捆绑 Node 运行时（`resources/bin/node`）：dsh 0.2.1-alpha.2 起 `node-addon-require-builtin` 在 `ELECTRON_RUN_AS_NODE` 模式下拿不到 V8 embedder context，引擎必须由一份独立 Node 二进制启动
 - `@deepseek-ai/libreoffice-kit` 的平台引擎包（0.1.7 起 Office/PDF 转换依赖）。Linux 侧是 `libreoffice-kit-wasm`（约 195 MB，上游没有 Linux 原生包），**是当前 `.deb` 体积的主要来源**；它由 npm 的 `os` 字段完成平台筛选（`-wasm` 不带 `-<platform>-<arch>` 后缀，不会被 `after-pack` 的模式过滤误伤），且不参与启动——只在真正跑 Office 转换时惰性解析，故未列入 `native-modules.mjs` 的产物断言
 
 `asar: false` 同样是必需设置：profile 初始化会创建符号链接，需要真实文件系统路径。
