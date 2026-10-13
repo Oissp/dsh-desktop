@@ -55,15 +55,14 @@ pnpm dist            # 构建 Debian amd64 .deb 到 out/
 React 回退 UI（src/）─→ preload ─→ IPC ─→ Electron 主进程（electron/）─→ adapter ─→ dsh 引擎（本地回环端口）
 
 electron/   主进程：生命周期、IPC、引擎、托盘、更新、日志、崩溃报告
-  ├─ preload.ts         contextBridge：window.harness 与 window.__desktop__
+  ├─ preload.ts         contextBridge：window.harness；主题源转发
   ├─ dsh-manager.ts     引擎子进程：启动、端口解析、就绪探测、关机升级阶梯
   ├─ ipc.ts             全部 ipcMain.handle 注册（IPC 通道在此收口）
   ├─ window-generation.ts  窗口创建、导航防护、回退页 / 引擎 UI 切换
   ├─ profile-setup.ts   dsh web profile 初始化与伴随插件安装、清理
   ├─ guard-snapshot.ts  配置快照 / 回滚（守护瀑布）；crash-loop-detector.ts 崩溃环熔断
-  ├─ archive-cleanup.ts 硬删会话；title-snapshot.ts 会话标题快照
   └─ update-*.ts · credential-store.ts · settings-store.ts · log-sink.ts · crash-report.ts …
-adapter/    dsh Typert Remote 协议适配（dsh-client.ts 传输 / events.ts 归一化 / index.ts DshAdapter）
+adapter/    dsh Typert Remote 协议适配（dsh-client.ts 传输 / index.ts DshAdapter）
 shared/     IPC 契约（types.ts）与 fetch-timeout.ts
 src/        React 回退 UI：启动 / 首启向导 / 恢复页
 scripts/    打包钩子与校验（after-pack / verify-deb / smoke-test / compare-dsh-versions / lib/）

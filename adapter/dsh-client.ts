@@ -5,9 +5,8 @@
  * 改为 Typert Remote 网关：
  *  - 一元 RPC：POST /api/<namespace>/<method>，body {type:'client-request', rpcId, method, payload:{args}}
  *    响应 {type:'server-response', rpcId, result:{ok:true,value}|{ok:false,error:{code,message,details}}}
- *  - 流：WebSocket /api/remote.mux，open{item}/end/error 帧（多路复用多个流）
  *  - 强制浏览器认证：启动 URL 携带 ?token=，GET /?token= → 303 + Set-Cookie，
- *    所有 /api/* 请求（含 WS 握手）都必须带该 Cookie。
+ *    所有 /api/* 请求都必须带该 Cookie。
  *
  * 本文件只负责传输与信封，不包含业务语义。
  */
@@ -47,183 +46,12 @@ export function nextRpcId(): string {
 }
 
 /**
- * 一个远端流（remote.mux 上的逻辑流）。
- * 帧先入队；`first()` 取首个帧（用于 follow 的 snapshot），之后 `onItem` 持续接收后续帧。
- */
-export class RemoteStream {
-  private queue: unknown[] = []
-  private waiters: Array<{ resolve: (v: unknown) => void; reject: (e: Error) => void }> = []
-  private settled: Error | null = null
-  /** 首个帧消费后设置：后续每个 item 都会回调。 */
-  onItem: ((value: unknown) => void) | null = null
-
-  constructor(readonly id: string, readonly endpoint: string, readonly args: Record<string, unknown>) {}
-
-  push(value: unknown) {
-    if (this.settled) return
-    if (this.waiters.length > 0) {
-      this.waiters.shift()!.resolve(value)
-      return
-    }
-    if (this.onItem) this.onItem(value)
-    else this.queue.push(value)
-  }
-
-  end() {
-    this.settled = this.settled ?? new Error(`远端流结束（${this.endpoint}）`)
-    for (const w of this.waiters.splice(0)) w.reject(this.settled)
-  }
-
-  fail(error: Error) {
-    this.settled = this.settled ?? error
-    for (const w of this.waiters.splice(0)) w.reject(this.settled)
-  }
-
-  /** 取队列中的首个帧；流已结束则抛错。 */
-  async first(timeoutMs = 15_000): Promise<unknown> {
-    if (this.queue.length > 0) return this.queue.shift()!
-    if (this.settled) throw this.settled
-    return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout>
-      const waiter = {
-        resolve: (v: unknown) => {
-          clearTimeout(timer)
-          resolve(v)
-        },
-        reject: (e: Error) => {
-          clearTimeout(timer)
-          reject(e)
-        },
-      }
-      this.waiters.push(waiter)
-      timer = setTimeout(() => {
-        const idx = this.waiters.indexOf(waiter)
-        if (idx >= 0) this.waiters.splice(idx, 1)
-        reject(new Error(`等待远端流首帧超时（${this.endpoint}）`))
-      }, timeoutMs)
-    })
-  }
-}
-
-/**
- * remote.mux WebSocket 多路复用客户端。
- * 一条 WS 承载多个流；断线自动重连并重开所有活跃流。
- */
-export class RemoteMuxClient {
-  private ws: WebSocket | null = null
-  private streams = new Map<string, RemoteStream>()
-  private stopped = false
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-
-  constructor(
-    private readonly baseUrl: string,
-    private readonly cookie: () => string | null,
-  ) {}
-
-  open(endpoint: string, args: Record<string, unknown>): RemoteStream {
-    const streamId = randomUUID()
-    const stream = new RemoteStream(streamId, endpoint, args)
-    this.streams.set(streamId, stream)
-    this.ensureSocket()
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.sendOpen(stream)
-    } else {
-      // 等 onopen 统一重开
-      this.pendingOpens.push(stream)
-    }
-    return stream
-  }
-
-  private pendingOpens: RemoteStream[] = []
-
-  private sendOpen(stream: RemoteStream) {
-    this.ws?.send(JSON.stringify({ type: 'open', streamId: stream.id, endpoint: stream.endpoint, payload: { args: stream.args } }))
-  }
-
-  cancel(stream: RemoteStream) {
-    this.streams.delete(stream.id)
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'cancel', streamId: stream.id }))
-    }
-    stream.end()
-  }
-
-  private ensureSocket() {
-    if (this.stopped || this.ws) return
-    const cookie = this.cookie()
-    // Node ≥22 全局 WebSocket（undici）支持 { headers }；DOM 类型不声明该选项，显式断言。
-    const WsCtor = WebSocket as unknown as {
-      new (url: string, options?: { headers?: Record<string, string> }): WebSocket
-    }
-    const ws = new WsCtor(`ws://127.0.0.1:${new URL(this.baseUrl).port}/api/remote.mux`, cookie ? { headers: { cookie } } : undefined)
-    this.ws = ws
-
-    ws.onopen = () => {
-      const pending = this.pendingOpens.splice(0)
-      for (const p of pending) this.sendOpen(p)
-    }
-
-    ws.onmessage = (ev) => {
-      let frame: Record<string, unknown>
-      try {
-        frame = JSON.parse(ev.data as string) as Record<string, unknown>
-      } catch {
-        return
-      }
-      const streamId = typeof frame.streamId === 'string' ? frame.streamId : ''
-      const stream = this.streams.get(streamId)
-      if (!stream) return
-      if (frame.type === 'item') {
-        stream.push(frame.value)
-      } else if (frame.type === 'end') {
-        this.streams.delete(streamId)
-        stream.end()
-      } else if (frame.type === 'error') {
-        this.streams.delete(streamId)
-        const err = (frame.error ?? {}) as { message?: string; code?: string }
-        stream.fail(new Error(`远端流错误 ${stream.endpoint}${err.code ? ` (${err.code})` : ''}: ${err.message ?? '未知错误'}`))
-      }
-    }
-
-    ws.onclose = () => {
-      if (this.ws === ws) this.ws = null
-      // 断线：活跃流挂起，重连后重新 open
-      // （避免重复入队：认证前 401 断开时 pendingOpens 尚未被 onopen 清空）
-      if (!this.stopped) {
-        for (const stream of this.streams.values()) {
-          if (!this.pendingOpens.includes(stream)) this.pendingOpens.push(stream)
-        }
-        this.reconnectTimer = setTimeout(() => this.ensureSocket(), 2000)
-      }
-    }
-
-    ws.onerror = () => {
-      ws.close()
-    }
-  }
-
-  close() {
-    this.stopped = true
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    if (this.ws) {
-      this.ws.onclose = null
-      this.ws.close()
-      this.ws = null
-    }
-    for (const stream of this.streams.values()) stream.end()
-    this.streams.clear()
-    this.pendingOpens = []
-  }
-}
-
-/**
- * 低层传输客户端：unary RPC 的 HTTP POST + remote.mux 流。
+ * 低层传输客户端：unary RPC 的 HTTP POST。
  * 不包含业务语义。
  */
 export class DshClient {
   private baseUrl: string
   private authCookie: string | null = null
-  private mux: RemoteMuxClient | null = null
   /** 引擎版本（dsh package.json），由宿主注入（adapter 无法自行定位打包路径）。 */
   private engineVersion: string | null = null
 
@@ -304,19 +132,6 @@ export class DshClient {
     return data.result.value as T
   }
 
-  /** 打开一个远端流（走 remote.mux）。 */
-  openStream(endpoint: string, args: Record<string, unknown>): RemoteStream {
-    if (!this.mux) {
-      this.mux = new RemoteMuxClient(this.baseUrl, () => this.authCookie)
-    }
-    return this.mux.open(endpoint, args)
-  }
-
-  /** 取消一个远端流（发送 cancel 帧）。 */
-  muxCancel(stream: RemoteStream) {
-    this.mux?.cancel(stream)
-  }
-
   /** 就绪探测：发起一次无需业务状态的认证请求。 */
   async probeReady(): Promise<boolean> {
     if (!this.authCookie) return false
@@ -382,13 +197,6 @@ export class DshClient {
     return this.request('session/create', { request: payload })
   }
 
-  /** 打开 follow 流并返回其句柄；首帧为 snapshot（含完整历史 records）。 */
-  followSession(sessionId: string, maxMessages = 500): RemoteStream {
-    return this.openStream('session/follow', {
-      request: { address: { kind: 'session', sessionId }, maxMessages },
-    })
-  }
-
   prompt(payload: { sessionId: string; mode: 'queue' | 'steer'; content: unknown[]; clientTimeZone?: string }): Promise<{ accepted: boolean }> {
     return this.request('session/prompt', {
       request: { requestId: randomUUID(), ...payload },
@@ -397,28 +205,6 @@ export class DshClient {
 
   cancel(payload: { sessionId: string }): Promise<{ accepted: boolean }> {
     return this.request('session/cancel', { request: payload })
-  }
-
-  /**
-   * 归档会话。
-   *
-   * 0.1.7-alpha.1 起引擎在写入前做活跃度检查：会话若有运行中的回合、子代理、
-   * 后台任务或定时提醒，不带 `stopActivity` 的归档会被拒绝
-   * （`workspace/session-active`），归档集合保持不变。`stopActivity: true`
-   * 跳过检查、先落盘归档，再请求各 provider 停掉这些工作（不等待停稳）。
-   */
-  archiveSession(payload: { sessionId: string; stopActivity?: boolean }): Promise<{ archivedSessionIds: string[] }> {
-    return this.request('workspace/archiveSession', { request: payload })
-  }
-
-  /** 取消归档（0.1.6-alpha.1 起提供）：幂等，且不校验会话是否存在。 */
-  unarchiveSession(payload: { sessionId: string }): Promise<{ archivedSessionIds: string[] }> {
-    return this.request('workspace/unarchiveSession', { request: payload })
-  }
-
-  /** 打开 workspace/follow 流；首帧为 baseline（含 archivedSessionIds 与各 workspace 的 sessionIds→path）。 */
-  workspaceFollow(): RemoteStream {
-    return this.openStream('workspace/follow', {})
   }
 
   modelCatalog(): Promise<{
@@ -436,10 +222,5 @@ export class DshClient {
 
   pickDirectory(): Promise<string | null> {
     return this.request('directoryPicker/pick', {})
-  }
-
-  close() {
-    this.mux?.close()
-    this.mux = null
   }
 }

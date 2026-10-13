@@ -45,8 +45,8 @@ export const COMPANION_PLUGINS: CompanionPluginEntry[] = [
   //  - 归档会话只读查看器：引擎明确禁止打开归档行（aria-description
   //    「已归档对话暂时无法查看，请取消归档后查看」），只能先取消归档再查看。
   //  - 归档会话彻底删除：引擎没有删除 RPC（README：sessions can be archived but
-  //    never deleted）。桌面端的 session:hardDelete 仍保留在 __desktop__ 桥上，但
-  //    已无应用内调用方。
+  //    never deleted）。桌面端曾自带的硬删链路（归档隐藏 + 删日志 + 取消归档收尾）
+  //    已一并移除——它仅服务已删除的归档面板，无应用内调用方。
   //
   // 新增伴随插件在此添加，例如：
   // { id: 'harness-pet', enabled: false, description: '桌面宠物（默认关）' },

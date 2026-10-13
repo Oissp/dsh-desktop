@@ -274,7 +274,6 @@ export class DshManager {
       // 复用的 this.stdoutBuf 实例字段，污染新进程的端口解析。
       child.stdout?.off('data', onStdout)
       child.stderr?.off('data', onStderr)
-      this.adapter?.close()
       this.adapter = null
       this.proc = null
       if (!this.stopping) {
@@ -447,7 +446,6 @@ export class DshManager {
   /** 停止/退出后的状态收尾。幂等——spawn 时的 exit 处理器也会做同样的事。 */
   private teardown(): void {
     this.proc = null
-    this.adapter?.close()
     this.adapter = null
     this.ready = false
     this.stopping = false

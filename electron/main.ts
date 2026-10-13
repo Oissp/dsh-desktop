@@ -292,7 +292,7 @@ function setupMenu() {
   }
   const readyVersion = updateLifecycle?.readyVersion ?? null
   // 视图菜单：重载/开发者工具只在开发模式暴露。生产菜单里开 DevTools 可让
-  // 任何人在官方 UI 里经 preload 桥访问 window.__desktop__ 的会话凭证。
+  // 任何人在官方 UI 里经 preload 桥访问会话凭证。
   const viewSubmenu: MenuItemConstructorOptions[] = []
   if (!app.isPackaged) {
     viewSubmenu.push(
