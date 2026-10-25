@@ -38,10 +38,10 @@ npmRebuild: false
 # 复制完整 node_modules（见 scripts/after-pack.mjs）
 afterPack: scripts/after-pack.mjs
 
-# 原生模块（node-pty / koffi）解包，保证 dsh 引擎（独立 Node 进程）下可加载
-asarUnpack:
-  - node_modules/.pnpm/node-pty*/**/*
-  - node_modules/.pnpm/koffi*/**/*
+# 不配 asarUnpack：asar: false 下它本就是空操作，且原配置指向 node_modules/.pnpm/*，
+# 而本项目用 nodeLinker: hoisted（pnpm-workspace.yaml），.pnpm 里只有 lock.yaml，
+# 包实体在 node_modules/<pkg>，那些 glob 永远匹配不到。原生模块由 after-pack.mjs
+# 以真实文件复制进 resources/app/node_modules，不需要解包。
 
 # 产物见 .github/workflows/build-release.yml：Debian 13 / amd64 .deb。
 linux:
