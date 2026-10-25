@@ -20,8 +20,12 @@ files:
   - build/brand/**/*
   - package.json
 
-# 不使用 asar：dsh profile 初始化会为安装包内的依赖创建符号链接，
-# 需要真实文件路径（asar 内的符号链接目标不可靠）。
+# 不使用 asar：dsh 引擎由捆绑的独立 Node 二进制启动（resources/bin/node，见
+# electron/node-runtime.ts），而 asar 只有 Electron 内嵌的 Node 能读——真 Node 进程
+# 打不开 app.asar 里的 bin.js 与 node_modules，而后者正是体积大头（@deepseek-ai
+# 闭包本身就有 200+ MB）。after-pack.mjs 把依赖复制到 resources/app/node_modules，
+# 必须是真实路径。
+# （Electron 45 的 asar 改动只是让 Electron 进程内的 fs 直接读归档，不改变这一点。）
 asar: false
 
 npmRebuild: false

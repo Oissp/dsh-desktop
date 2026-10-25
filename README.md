@@ -97,7 +97,7 @@ dsh 的依赖闭包不能交给 electron-builder 默认的依赖收集：pnpm �
 - 捆绑 Node 运行时（`resources/bin/node`）：dsh 0.2.1-alpha.2 起 `node-addon-require-builtin` 在 `ELECTRON_RUN_AS_NODE` 下拿不到 V8 embedder context，引擎必须由独立 Node 二进制启动
 - `@deepseek-ai/libreoffice-kit` 的平台引擎包（Office/PDF 转换依赖）：Linux 侧为 `libreoffice-kit-wasm`（约 195 MB，**当前 `.deb` 体积的主要来源**）。它由 npm 的 `os` 字段完成平台筛选，只在真正跑 Office 转换时惰性解析，不参与启动，故未列入 `native-modules.mjs` 的产物断言
 
-`asar: false` 同样是必需设置：profile 初始化会创建符号链接，需要真实文件系统路径。
+`asar: false` 同样是必需设置：引擎由捆绑的独立 Node 二进制启动（见上条），而 asar 只有 Electron 内嵌的 Node 能读——真 Node 进程打不开 `app.asar` 里的 `bin.js` 与 `node_modules`，而后者正是体积大头。依赖由 `after-pack.mjs` 复制到 `resources/app/node_modules`，必须是真实文件路径。
 
 裁剪分两级。包根一级用 `pnpm list` 解析真实依赖树，排除 **dev-only 传递闭包 = 全量闭包 − prod 闭包**（只按名字排除直接 devDependencies 会漏掉数百个传递依赖；`pnpm list` 失败时回退到后者，体积偏大但不破坏功能）。包内一级再裁掉不影响功能的死重：
 
