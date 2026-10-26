@@ -2,8 +2,10 @@
   "compilerOptions": {
     // 渲染进程只跑在 Electron 内置的 Chromium 156 里（同 package.json 钉死的
     // Electron 45.0.0），没有浏览器兼容矩阵，故 lib 取 ES2024。
-    // 这里的 target 只影响类型检查：Vite 走 esbuild，按 build.target 的
-    // baseline 基线（chrome111）自行降级，不读 tsconfig 的 target。
+    // 这里的 target 只影响类型检查：构建期降级由 Vite 负责，不读 tsconfig 的 target。
+    // vite.config.ts 未设 build.target，Vite 8 用默认的 baseline-widely-available
+    // （chrome111 / edge111 / firefox114 / safari16.4 / ios16.4），转译走 oxc + rolldown
+    // （Vite 8 起取代 esbuild；transformWithEsbuild 已弃用）.
     "target": "ES2024",
     "useDefineForClassFields": true,
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
