@@ -12,7 +12,7 @@
  * 调 placeNodeRuntime 写入；verify-deb / smoke-test 共用路径常量
  * 做存在性断言，避免各处硬编码不同步。
  *
- * 版本选 Node 24 LTS（Krypton），与 Electron 44.2 内嵌 Node（24.20）同大行，
+ * 版本选 Node 24 LTS（Krypton），与 Electron 45.0.0 内嵌 Node（24.22）同大行，
  * 已实测可启动 dsh alpha.2 引擎并打印端口 URL。
  */
 import { spawnSync } from 'node:child_process'

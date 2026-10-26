@@ -6,7 +6,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 功能
 
-- 内置 `@deepseek-ai/dsh`（0.2.1-rc.2），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
+- 内置 `@deepseek-ai/dsh`（0.2.1-rc.3），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
 - 首启向导配置工作区与模型凭证；引擎崩溃进入恢复模式，可回滚配置快照重启
 - 凭证经 Electron `safeStorage` 加密保存；启用 CSP、导航限制与单实例锁
 - 稳定性：崩溃环检测 + 配置快照回滚、托盘常驻、日志落盘
@@ -80,7 +80,7 @@ build/      图标资源 · .github/workflows/  CI（ci.yml）与发版（build-
 | `shared/` | 两侧 | 两者皆是 | — |
 | `scripts/` | 构建 / CI（不入产物） | 不在 tsconfig 内，由 Vitest 直接跑 | — |
 
-两个 tsconfig 均以 `ES2024` 为目标与 `lib`。Electron 44.5.1 内置 Node 24.21.0 / Chromium 152，引擎捆绑 Node 同为 24.21.0，全部由 `package.json` 与 `scripts/lib/node-runtime.mjs` 钉死，无兼容矩阵，故这是准确下限；渲染进程的 `target` 只影响类型检查，实际降级由 Vite/esbuild 决定。
+两个 tsconfig 均以 `ES2024` 为目标与 `lib`。Electron 45.0.0 内置 Node 24.22.0 / Chromium 156，引擎捆绑 Node 为 24.21.0（两者都由 `package.json` 与 `scripts/lib/node-runtime.mjs` 钉死，无兼容矩阵，取下限 24.21），故这是准确下限；渲染进程的 `target` 只影响类型检查，实际降级由 Vite/esbuild 决定。
 
 ### 关键原则：adapter 是隔离边界
 
