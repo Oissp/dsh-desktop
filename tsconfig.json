@@ -18,10 +18,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["shared/*"]
-    }
+    // typescript 7 起不再自动包含 node_modules/@types/*（5.x 会扫 node_modules/@types 下全部包），
+    // 必须显式声明。本 config 的 include 含 adapter/ 与测试，其中用到 node:crypto、node:fs 等，
+    // 故列 node；DOM 侧类型由上面的 lib 提供，不依赖 @types/*。
+    // 原 baseUrl + "@shared/*" 别名已删：全仓库零引用（各处都用相对路径 ../shared/），
+    // 而 TS7 移除了 baseUrl、paths 也要求相对路径写法，留着只会在升级时报错。
+    "types": ["node"]
   },
   "include": ["src", "shared", "adapter"]
 }
