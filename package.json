@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Desktop Client for DeepSeek Harness",
   "main": "dist-electron/electron/main.js",
   "type": "module",
@@ -9,7 +9,7 @@
   "homepage": "https://github.com/Oissp/dsh-desktop",
   "private": true,
   "desktopName": "com.dsh.desktop.desktop",
-  "packageManager": "pnpm@11.21.0",
+  "packageManager": "pnpm@12.15.0",
   "scripts": {
     "dev": "concurrently -k -n renderer,electron -c cyan,magenta \"pnpm dev:renderer\" \"pnpm dev:electron\"",
     "dev:renderer": "vite",
@@ -25,7 +25,7 @@
     "dist": "pnpm build && electron-builder --linux deb --x64"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.3",
+    "@deepseek-ai/dsh": "0.2.1-rc.4",
     "electron-updater": "^6.8.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -51,6 +51,6 @@
   },
   "engines": {
     "node": ">=22.19.0",
-    "pnpm": ">=9"
+    "pnpm": ">=12.15.0"
   }
 }

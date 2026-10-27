@@ -59,7 +59,7 @@ jobs:
       - name: Enable Corepack & pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@11.21.0 --activate
+          corepack prepare pnpm@12.15.0 --activate
           pnpm --version
 
       # 失败时输出里已含 包名 / 受影响版本区间 / 修复版 / 完整依赖路径，可直接照着

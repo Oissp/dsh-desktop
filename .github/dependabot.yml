@@ -24,7 +24,7 @@ updates:
   # npm / pnpm
   # ---------------------------------------------------------------------------
   # ecosystem 写 npm：Dependabot 的 npm 生态同时支持 package-lock.json / yarn.lock /
-  # pnpm-lock.yaml，本项目用 pnpm（packageManager: pnpm@11.21.0），无需另写 pnpm。
+  # pnpm-lock.yaml，本项目用 pnpm（packageManager: pnpm@12.15.0），无需另写 pnpm。
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
