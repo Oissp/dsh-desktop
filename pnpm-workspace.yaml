@@ -81,9 +81,23 @@ overrides:
   zod: 4.6.7 # 50 个 dsh-* 包精确 pin 4.4.3（另有 4 个包声明 ^4.4.3）。4.4.3 命中
   # GHSA-mrhx-c7xc-m3w5（high, CVSS 7.5：超长 constrained collection 校验耗内存）。
   # 只做同主版本 minor 抬升 4.4.3 → 4.6.7，未跨大版本。
-  'undici@8': 8.12.3 # 用 `undici@8` 选择器而非全局 `undici`：dsh-http-proxy /
-  # dsh-web-fetch-http 精确锁 8.11.2（落在 >=8.0.0 <8.12.2 区间，1 high + 2 moderate：
-  # 未处理 content-encodings 错误 DoS、无界内存 DoS、SRI 非 loopback 绕过），
-  # 而 node-gyp 声明 ^6.25.0、@electron/get 声明 ^7.24.4 是 **dev-only 构建期闭包**
-  # （--prod 审不到、也不进 .deb）。全局钉会把这两条 dev 链路一起跨大版本顶到 8.x，
-  # 故按主版本分开：8.12.2 起已修这两条 §undici 告警，取区间内最新 8.12.3。
+  # ↓ undici 三条链路，按 **父包** 选择器钉，不能用 `undici@<主版本>`。
+  # 主版本选择器看着更自然，但它挑的是所有落在该主版本范围内的解析结果，
+  # 包括 openai 那条 **peerDependencies `>=5 <9`** —— openai 的 undici 是可选的
+  # peer，由 pnpm 的 peer 解析决定指向哪份副本。实测：只加 `undici@7` 会让
+  # openai 的 peer 从 8.12.3 掉到 7.30.1（跨主版本降级，且它会 `import
+  # { Agent, ProxyAgent } from 'undici'`）；同时加 `undici@6` 则会掉到 6.29.1。
+  # 父包选择器只改自己那条边，openai 继续用 dsh 闭包里的 8.12.3：
+  'node-gyp>undici': 6.29.1 # electron-builder → app-builder-lib → @electron/rebuild
+  # → node-gyp 12.4.0 声明 ^6.25.0。dev-only 构建期闭包，不进 .deb，但 Dependabot
+  # 会扫 lockfile 里解析出的 6.28.1。6.29.1 是 6.x 的修复线：content-encodings
+  # 未处理错误 DoS（high, >=6.23.0 <6.29.1）+ EventSource 无界内存
+  # （moderate, >=6.5.0）。落在 ^6.25.0 内。
+  '@electron/get>undici': 7.30.1 # electron 45 → @electron/get 5.1.0 的
+  # optionalDependencies 声明 ^7.24.4（下载器，构建期闭包，不进 .deb）。7.29.1
+  # 命中三条：content-encodings DoS（high, >=7.18.0）、EventSource 无界内存
+  # （>=7.0.0）、SRI 非小写算法令牌绕过（>=7.15.0）。7.30.1 全部修复，落在 ^7.24.4 内。
+  'undici@8': 8.12.3 # dsh-http-proxy / dsh-web-fetch-http 精确锁 8.11.2，落在
+  # >=8.0.0 <8.12.2 区间（1 high + 2 moderate：未处理 content-encodings 错误 DoS、
+  # 无界内存 DoS、SRI 非 loopback 绕过）。openai 通过 peerDependencies 声明
+  # `>=5 <9`，8.12.3 在区间内。8.12.2 起已修，取区间内最新 8.12.3。
