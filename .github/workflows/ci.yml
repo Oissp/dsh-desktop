@@ -41,6 +41,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # dsh 0.2.2-alpha.2 声明 engines.node >= 24.9.0，引擎闭包里也用到了
+      # Promise.try / RegExp.escape / Math.sumPrecise 等 Node 24 API；ubuntu-latest
+      # 预装版本不保证，显式钉住与捆绑运行时（scripts/lib/node-runtime.mjs 的 24.x）同大行。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Enable Corepack & pnpm
         run: |
           corepack enable
@@ -114,7 +121,7 @@ jobs:
             libxfixes3 libxrandr2 libgbm1 libasound2 \
             libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 \
             xvfb xauth
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get install -y nodejs
           node --version
           npm --version

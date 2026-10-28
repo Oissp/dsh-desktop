@@ -76,7 +76,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           # sync job 不做依赖安装（bumped 条件才 pnpm install），store 目录可能不存在，
           # 关闭自动缓存避免 Post cleanup 报 Path Validation Error。
           package-manager-cache: false
@@ -323,7 +323,7 @@ jobs:
             libxfixes3 libxrandr2 libgbm1 libasound2 \
             libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 \
             xvfb xauth
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get install -y nodejs
           node --version
           npm --version

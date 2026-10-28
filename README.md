@@ -6,7 +6,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 功能
 
-- 内置 `@deepseek-ai/dsh`（0.2.1-rc.4），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
+- 内置 `@deepseek-ai/dsh`（0.2.2-alpha.2），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
 - 首启向导配置工作区与模型凭证；引擎崩溃进入恢复模式，可回滚配置快照重启
 - 凭证经 Electron `safeStorage` 加密保存；启用 CSP、导航限制与单实例锁
 - 稳定性：崩溃环检测 + 配置快照回滚、托盘常驻、日志落盘
@@ -30,7 +30,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 开发
 
-要求：Node.js `>=22.19.0`、pnpm `>=12.15.0`（项目使用 pnpm 12.15.0，推荐通过 Corepack 管理）。
+要求：Node.js `>=24.9.0`（dsh 0.2.2 的 `engines` 下限，且引擎闭包用到 `Promise.try` / `RegExp.escape` / `Math.sumPrecise` 等 Node 24 API）、pnpm `>=12.15.0`（项目使用 pnpm 12.15.0，推荐通过 Corepack 管理）。
 
 ```bash
 corepack enable

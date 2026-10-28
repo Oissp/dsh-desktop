@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Desktop Client for DeepSeek Harness",
   "main": "dist-electron/electron/main.js",
   "type": "module",
@@ -25,7 +25,7 @@
     "dist": "pnpm build && electron-builder --linux deb --x64"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.4",
+    "@deepseek-ai/dsh": "0.2.2-alpha.2",
     "electron-updater": "^6.8.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -50,7 +50,7 @@
     "wait-on": "^9.5.1"
   },
   "engines": {
-    "node": ">=22.19.0",
+    "node": ">=24.9.0",
     "pnpm": ">=12.15.0"
   }
 }
