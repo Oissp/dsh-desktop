@@ -118,6 +118,8 @@ dsh 的依赖闭包不能交给 electron-builder 默认的依赖收集：pnpm �
 pnpm test && pnpm build && pnpm dist && node scripts/verify-deb.mjs
 ```
 
+升级 dsh 后追加真引擎端到端冒烟：先 `npx electron . --remote-debugging-port=9222` 启动应用并等主窗口切到官方 Web UI，再跑 `node scripts/verify-engine-rpc.mjs`——经 CDP 会话 Cookie 对 `/api` 跑 modelCatalog / list / create / prompt+cancel / 持久化复查 RPC 套件。单元测试全部 mock 传输层，测不出 wire 协议问题，此步骤不可省略。
+
 `verify-deb.mjs` 检查五类内容，任一不满足即非零退出：**magic bytes**（合法 ar 归档且首个成员为 `debian-binary`）、**关键运行时路径**（`@deepseek-ai/` 闭包、koffi / node-addon-system 平台二进制、主可执行文件、捆绑 Node）、**平台纯净性**（无非 `linux-x64` prebuild 泄入）、**产物裁剪**（上表各项确实没进包，且反向确认目标平台的 `pty.node` 未被误伤）、**桌面标识**（`.desktop` 文件名与其 `StartupWMClass` 都等于 `desktopName`）。
 
 裁剪断言规则在 `scripts/lib/deb-trim-rules.mjs`（便于单测）：规则作用在 `dpkg-deb -c` 的**真实条目**上（目录条目带结尾 `/`，`after-pack` 的 filter 看不到这种形态），`scripts/__tests__/deb-trim-rules.test.ts` 把两种形态与 `after-pack` 的判断方向绑在一起钉住。CI 还会校验 `.deb` 控制信息与 `out/latest-linux.yml`，并用 `scripts/smoke-test.mjs` 在 xvfb 下实际启动 `out/linux-unpacked` 8 秒，确认主进程不立即崩溃、日志被创建、无模块加载失败。体积随 dsh、Electron 与原生模块版本变化，以每次构建的 `out/` 产物为准。
