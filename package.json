@@ -25,7 +25,7 @@
     "dist": "pnpm build && electron-builder --linux deb --x64"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.2-rc.2",
+    "@deepseek-ai/dsh": "0.2.2-rc.3",
     "electron-updater": "^6.8.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
