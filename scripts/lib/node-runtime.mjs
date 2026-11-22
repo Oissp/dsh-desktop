@@ -12,8 +12,10 @@
  * 调 placeNodeRuntime 写入；verify-deb / smoke-test 共用路径常量
  * 做存在性断言，避免各处硬编码不同步。
  *
- * 版本选 Node 24 LTS（Krypton），与 Electron 45.0.0 内嵌 Node（24.22）同大行，
- * 已实测可启动 dsh alpha.2 引擎并打印端口 URL。
+ * 版本选 Node 24 LTS（Krypton），与 Electron 45.0.0 内嵌 Node（24.22）同大行。
+ * dsh 0.2.3-alpha.2 起 engines 为 `^24.22.3 || >=26.13.1`（内置 undici 首次包含
+ * 2026-11 安全修复的版本），因此必须取 24.22.3 或更高的 24.x；旧钉 24.21.0 会让
+ * 打包产物里的引擎在启动时被 engines 检查拒绝。
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync, cpSync, chmodSync } from 'node:fs'
@@ -21,7 +23,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 /** 捆绑的 Node 运行时版本。升级时同步改此处一处。 */
-export const NODE_RUNTIME_VERSION = 'v24.21.0'
+export const NODE_RUNTIME_VERSION = 'v24.22.3'
 
 const DIST_BASE = 'https://nodejs.org/dist'
 

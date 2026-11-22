@@ -41,12 +41,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # dsh 0.2.2-rc.3 声明 engines.node >= 24.9.0，引擎闭包里也用到了
+      # dsh 0.2.3-alpha.2 声明 engines.node ^24.22.3 || >=26.13.1，引擎闭包里也用到了
       # Promise.try / RegExp.escape / Math.sumPrecise 等 Node 24 API；ubuntu-latest
-      # 预装版本不保证，显式钉住与捆绑运行时（scripts/lib/node-runtime.mjs 的 24.x）同大行。
+      # 预装版本不保证，显式钉住与捆绑运行时（scripts/lib/node-runtime.mjs 的 v24.22.3）完全一致。
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.22.3
 
       - name: Enable Corepack & pnpm
         run: |

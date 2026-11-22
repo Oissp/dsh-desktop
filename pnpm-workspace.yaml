@@ -78,6 +78,13 @@ overrides:
   # StreamableHTTPClientTransport / specTypeSchemas / StdioClientTransport 四个符号，
   # 2.3.0 全部照旧导出；2.3.0 的实质变更就是新增 redirectPolicy 且默认收紧为
   # 'same-origin'——即这条 GHSA 的修复本身，对 dsh 是收紧而非破坏。
+  '@modelcontextprotocol/server': 2.3.0 # dsh-cua-mcp（0.2.3-alpha.1 起新引入）精确锁 2.2.0，
+  # 落在 >=2.0.0 <2.3.0 告警区间内：HTTP transport / server 实例串消息（GHSA-jm63-cq47-j5jp，
+  # high）、默认大小限制内的单请求校验耗尽内存（GHSA-46jr-4wx8-v453，high）、server bearer
+  # 认证接受其他服务签发的 token（GHSA-rvq5-wwqv-78pq，moderate）。实测 dsh-cua-mcp 只
+  # import Server / specTypeSchemas / StdioServerTransport 与 CallToolResult / ElicitResult 类型，
+  # 2.3.0 全部照旧导出；2.3.0 的 @modelcontextprotocol/core 与 client 侧已经在用的一致，
+  # 对 dsh 是收紧而非破坏。
   zod: 4.6.7 # 50 个 dsh-* 包精确 pin 4.4.3（另有 4 个包声明 ^4.4.3）。4.4.3 命中
   # GHSA-mrhx-c7xc-m3w5（high, CVSS 7.5：超长 constrained collection 校验耗内存）。
   # 只做同主版本 minor 抬升 4.4.3 → 4.6.7，未跨大版本。

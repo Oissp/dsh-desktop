@@ -6,7 +6,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 功能
 
-- 内置 `@deepseek-ai/dsh`（0.2.2-rc.5），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
+- 内置 `@deepseek-ai/dsh`（0.2.3-alpha.2），首次初始化后即可使用。界面为官方 Web UI：流式回复、思考过程、工作区、模型与会话管理、归档会话三态筛选（隐藏已归档 / 全部对话 / 仅显示已归档）
 - 首启向导配置工作区与模型凭证；引擎崩溃进入恢复模式，可回滚配置快照重启
 - 凭证经 Electron `safeStorage` 加密保存；启用 CSP、导航限制与单实例锁
 - 稳定性：崩溃环检测 + 配置快照回滚、托盘常驻、日志落盘
@@ -30,7 +30,7 @@ DSH Desktop 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 
 ## 开发
 
-要求：Node.js `>=24.9.0`（dsh 0.2.2 的 `engines` 下限，且引擎闭包用到 `Promise.try` / `RegExp.escape` / `Math.sumPrecise` 等 Node 24 API）、pnpm `>=12.15.0`（项目使用 pnpm 12.15.0，推荐通过 Corepack 管理）。
+要求：Node.js `^24.22.3 || >=26.13.1`（dsh 0.2.3-alpha.2 的 `engines` 下限；24.22.3 是内置 undici 首次包含 2026-11 安全修复的版本，26.x 需 `>=26.13.1`，引擎闭包同时用到 `Promise.try` / `RegExp.escape` / `Math.sumPrecise` 等 Node 24 API）、pnpm `>=12.15.0`（项目使用 pnpm 12.15.0，推荐通过 Corepack 管理）。
 
 ```bash
 corepack enable
@@ -80,7 +80,7 @@ build/      图标资源 · .github/workflows/  CI（ci.yml）与发版（build-
 | `shared/` | 两侧 | 两者皆是 | — |
 | `scripts/` | 构建 / CI（不入产物） | 不在 tsconfig 内，由 Vitest 直接跑 | — |
 
-两个 tsconfig 均以 `ES2024` 为目标与 `lib`。Electron 45.0.0 内置 Node 24.22.0 / Chromium 156，引擎捆绑 Node 为 24.21.0（两者都由 `package.json` 与 `scripts/lib/node-runtime.mjs` 钉死，无兼容矩阵，取下限 24.21），故这是准确下限；渲染进程的 `target` 只影响类型检查，实际降级由 Vite/esbuild 决定。
+两个 tsconfig 均以 `ES2024` 为目标与 `lib`。Electron 45.0.0 内置 Node 24.22.0 / Chromium 156，引擎捆绑 Node 为 24.22.3（两者都由 `package.json` 与 `scripts/lib/node-runtime.mjs` 钉死，无兼容矩阵；引擎侧按 dsh 的 `engines` 取下限 24.22.3），故这是准确下限；渲染进程的 `target` 只影响类型检查，实际降级由 Vite/esbuild 决定。
 
 ### 关键原则：adapter 是隔离边界
 
